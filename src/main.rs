@@ -55,7 +55,6 @@ pub struct TaskHandler {
 impl TaskManager<'_> {
     pub fn update<W: uWrite<Error = void::Void>>(&mut self,serial: &mut W) {
         {
-            let ref mut this = self.task_handler;
             let task_control_block: &TaskControlBlock = &self.task_control_block;
             let serial: &mut W = serial;
             let task_id = &task_control_block.task_id;
@@ -64,7 +63,7 @@ impl TaskManager<'_> {
             ufmt::uwriteln!(
                 serial,
                 "push task_id = {}",
-                this.calc
+                task_id
             )
             .void_unwrap();
             // let mut priority_stack: Vec<&u16, 8> = Vec::new();
@@ -76,19 +75,40 @@ impl TaskManager<'_> {
 }
 
 static mut priority_stack: Vec<&u16, 8> = Vec::new();
+static mut high_priority_task_id: u32 = 0;
 
 pub fn ContextSwitch<W: uWrite<Error = void::Void>>(stack: &Vec<TaskControlBlock, 8>,serial: &mut W) {
     let top_priority = GetTopPriority();
     for tcb_stack in stack {
         if top_priority == tcb_stack.task_priority {
-            ufmt::uwriteln!(
-                serial,
-                "high task priority task_id= {}",
-                &tcb_stack.task_id
-            )
-            .void_unwrap();
+            unsafe {
+                priority_stack.push(&top_priority);
+                high_priority_task_id = tcb_stack.task_id;
+            }
+            // ufmt::uwriteln!(
+            //     serial,
+            //     "high task priority task_id= {}",
+            //     tcb_stack.task_id
+            // )
+            // .void_unwrap();
         }
     }
+}
+pub fn StartTask<W: uWrite<Error = void::Void>>(serial: &mut W,methods: u32){
+    ufmt::uwriteln!(
+        serial,
+        "high task priority methods= {}",
+        methods as u16
+    )
+    .void_unwrap();
+    ufmt::uwriteln!(
+        serial,
+        "high task priority task_id= {}",
+        unsafe {
+            high_priority_task_id as u16
+        }
+    )
+    .void_unwrap();
 }
 
 pub fn GetTopPriority() -> &'static u16 {
@@ -148,6 +168,7 @@ fn main() -> ! {
         task_manager.update(&mut serial);
     }
     ContextSwitch(&stack,&mut serial);
+    StartTask(&mut serial,task_handler.calc);
     
     loop {
         unsafe { 
