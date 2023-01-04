@@ -77,30 +77,27 @@ impl TaskManager<'_> {
 static mut priority_stack: Vec<&u16, 8> = Vec::new();
 static mut high_priority_task_id: u32 = 0;
 
-pub fn ContextSwitch<W: uWrite<Error = void::Void>>(stack: &Vec<TaskControlBlock, 8>,serial: &mut W) {
+pub fn ContextSwitch(stack: &Vec<TaskControlBlock, 8>) {
     let top_priority = GetTopPriority();
     for tcb_stack in stack {
         if top_priority == tcb_stack.task_priority {
             unsafe {
                 priority_stack.push(&top_priority);
                 high_priority_task_id = tcb_stack.task_id;
+                // TODO: stateの切り替え(→RUNNING)
             }
-            // ufmt::uwriteln!(
-            //     serial,
-            //     "high task priority task_id= {}",
-            //     tcb_stack.task_id
-            // )
-            // .void_unwrap();
         }
     }
 }
 pub fn StartTask<W: uWrite<Error = void::Void>>(serial: &mut W,methods: u32){
+    // NOTE: StartTaskはソフトウェア側で設定する。ここで任意のタスクのメソッドを実行
     ufmt::uwriteln!(
         serial,
         "high task priority methods= {}",
         methods as u16
     )
     .void_unwrap();
+
     ufmt::uwriteln!(
         serial,
         "high task priority task_id= {}",
@@ -167,7 +164,7 @@ fn main() -> ! {
         };
         task_manager.update(&mut serial);
     }
-    ContextSwitch(&stack,&mut serial);
+    ContextSwitch(&stack);
     StartTask(&mut serial,task_handler.calc);
     
     loop {
