@@ -2,6 +2,8 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
+use core::slice::SliceIndex;
+
 // use arduino_hal::port::mode::Output;
 // use arduino_hal::port::Pin;
 use arduino_hal::prelude::*;
@@ -44,7 +46,7 @@ pub struct TaskManager<'a> {
 pub struct TaskControlBlock {
     task_id: u32,
     task_state: TaskState,
-    task_priority: &'static u16,
+    task_priority: &'static usize,
 }
 
 #[derive (Clone, Copy)]
@@ -57,34 +59,44 @@ impl TaskManager<'_> {
         {
             let task_control_block: &TaskControlBlock = &self.task_control_block;
             let serial: &mut W = serial;
-            let task_id = &task_control_block.task_id;
-            let task_state = &task_control_block.task_state;
-            let task_priority = &task_control_block.task_priority;
+            let task_id:&u32 = &task_control_block.task_id;
+            // let task_state = &task_control_block.task_state;
+            let task_priority= &task_control_block.task_priority;
             ufmt::uwriteln!(
                 serial,
                 "push task_id = {}",
                 task_id
             )
             .void_unwrap();
-            // let mut priority_stack: Vec<&u16, 8> = Vec::new();
             unsafe {
-                priority_stack.push(&task_priority);
+                priority_stack.push(task_priority);
             }
         };
     }
 }
 
-static mut priority_stack: Vec<&u16, 8> = Vec::new();
+static mut priority_stack: Vec<&usize, 8> = Vec::new();
 static mut high_priority_task_id: u32 = 0;
+static mut stack: Vec<TaskControlBlock, 8> = Vec::new();
 
-pub fn ContextSwitch(stack: &Vec<TaskControlBlock, 8>) {
+pub fn ContextSwitch() {
+    let running= TaskState::RUNNING;
+    let ready = TaskState::READY;
     let top_priority = GetTopPriority();
-    for tcb_stack in stack {
-        if top_priority == tcb_stack.task_priority {
-            unsafe {
-                priority_stack.push(&top_priority);
-                high_priority_task_id = tcb_stack.task_id;
+    unsafe {
+        for tcb_stack in &stack {
+            let mut task_id = tcb_stack.task_id;
+            let mut task_state = &tcb_stack.task_state;
+            let mut task_priority = tcb_stack.task_priority;
+            if &top_priority == task_priority {
+                unsafe {
+                    high_priority_task_id = task_id;
+                }
                 // TODO: stateの切り替え(→RUNNING)
+                task_state= &running;
+                // unreachable!();
+            } else {
+                task_state= &ready;
             }
         }
     }
@@ -94,7 +106,7 @@ pub fn StartTask<W: uWrite<Error = void::Void>>(serial: &mut W,methods: u32){
     ufmt::uwriteln!(
         serial,
         "high task priority methods= {}",
-        methods as u16
+        methods
     )
     .void_unwrap();
 
@@ -102,28 +114,32 @@ pub fn StartTask<W: uWrite<Error = void::Void>>(serial: &mut W,methods: u32){
         serial,
         "high task priority task_id= {}",
         unsafe {
-            high_priority_task_id as u16
+            high_priority_task_id
         }
     )
     .void_unwrap();
 }
 
-pub fn GetTopPriority() -> &'static u16 {
-    let max: &u16;
+pub fn GetTopPriority() -> usize {
+    let max: usize;
     unsafe {
+        // 最も優先順位の高いものを検索する
         match priority_stack.iter().max() {
-            Some(n) => max = *n,
+            Some(n) => max = **n,
             None => unreachable!(),
-        }
+        };
+        // 優先順位の低い順にソートする
+        priority_stack.sort_unstable();
+        // 優先順位の最も高い要素のインデックスを取り除く
+        priority_stack.remove(priority_stack.len()-1);
+        max
     }
-    max
 }
 
 #[avr_device::interrupt(atmega328p)]
 fn TIMER0_OVF() {
-    arduino_hal::delay_ms(100);
+    ContextSwitch();
 }
-
 
 #[arduino_hal::entry]
 fn main() -> ! {
@@ -143,7 +159,7 @@ fn main() -> ! {
     };
     let task2 = TaskControlBlock {
         task_id: 2,
-        task_state: TaskState::RUNNING,
+        task_state: TaskState::READY,
         task_priority: &2
     };
     
@@ -152,24 +168,27 @@ fn main() -> ! {
     // 任意のタスクをハンドラにセットする
     let task_handler = TaskHandler { calc: calc.run() };
 
-    let mut stack: Vec<TaskControlBlock, 8> = Vec::new();
-    stack.push(task1);
-    stack.push(task2);
-
-    // stackの所有権がxに移動しまわないように、参照を借用する
-    for x in &stack {
-        let mut task_manager = TaskManager {
-            task_control_block: x,
-            task_handler: &task_handler,
-        };
-        task_manager.update(&mut serial);
+    unsafe{
+        stack.push(task1);
+        stack.push(task2);
+        // stackの所有権がxに移動しまわないように、参照を借用する
+        for x in &stack {
+            let mut task_manager = TaskManager {
+                task_control_block: x,
+                task_handler: &task_handler,
+            };
+            task_manager.update(&mut serial);
+        }
     }
-    ContextSwitch(&stack);
-    StartTask(&mut serial,task_handler.calc);
-    
+    let mut led = pins.d13.into_output();
+    led.set_high();
     loop {
+        led.toggle();
+        arduino_hal::delay_ms(800);
+        ContextSwitch();
+        StartTask(&mut serial,task_handler.calc);
         unsafe { 
             avr_device::interrupt::enable();
-         };
+        };
     }
 }
