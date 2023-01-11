@@ -21,7 +21,11 @@ static mut PRIORITY_STACK: Vec<&usize, 8> = Vec::new();
 static HIGH_PRIORITY_TASK_ID: avr_device::interrupt::Mutex<cell::Cell<u32>> =
     avr_device::interrupt::Mutex::new(cell::Cell::new(0));
 
-static mut TASKS: Vec<TaskControlBlock, 8> = Vec::new();
+extern crate avr_device as device;
+use device::interrupt::Mutex;
+
+static mut TASKS: Mutex<Vec<TaskControlBlock, 8>> = Mutex::new(Vec::new());
+
 pub trait GlobalLog: Sync {
     fn log(&self, address: u8);
 }
@@ -65,7 +69,7 @@ pub fn context_switch() {
     let ready = TaskState::READY;
     let top_priority = get_top_priority();
     avr_device::interrupt::free(|cs| {
-        for tcb_stack in unsafe { &TASKS } {
+        for tcb_stack in unsafe { TASKS.get_mut() } {
             let task_id = tcb_stack.task_id;
             let mut _task_state = &tcb_stack.task_state;
             let mut _task_priority = tcb_stack.task_priority;
@@ -103,9 +107,11 @@ pub fn start_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     if _task_id <= 0 {
         return;
     }
-
+    unsafe {
+        let mut vec = TASKS.get_mut();
+        vec[_task_id - 1].task_handler;
+    }
     ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
-    // unsafe { TASKS[_task_id].task_handler }
 }
 
 pub fn get_top_priority() -> usize {
@@ -131,7 +137,7 @@ fn TIMER1_COMPA() {
 
 fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     // stackの所有権がtaskに移動しまわないように、参照を借用する
-    for task in unsafe { &TASKS } {
+    for task in unsafe { TASKS.get_mut() } {
         let mut task_manager = TaskManager {
             task_control_block: &task,
             task_handler: task.task_handler,
@@ -188,10 +194,13 @@ fn main() -> ! {
     };
 
     ufmt::uwriteln!(serial, "os start").void_unwrap();
+
     unsafe {
-        TASKS.push(_task1);
-        TASKS.push(_task2);
-        TASKS.push(_task3);
+        let mut vec = TASKS.get_mut();
+
+        vec.push(_task1);
+        vec.push(_task2);
+        vec.push(_task3);
     }
 
     let tmr1: TC1 = dp.TC1;
