@@ -9,8 +9,19 @@ use panic_halt as _;
 use panic_halt as _;
 use ufmt::{uWrite, uwriteln};
 
-static MYGLOBAL: Mutex<Cell<bool>> = Mutex::new(Cell::new(false));
+use core::cell::{self};
 
+use arduino_hal::port::mode::Output;
+use arduino_hal::port::Pin;
+
+use arduino_hal::hal::port::{PD4, PD5, PD6};
+
+static mut PRIORITY_STACK: Vec<&usize, 8> = Vec::new();
+
+static HIGH_PRIORITY_TASK_ID: avr_device::interrupt::Mutex<cell::Cell<u32>> =
+    avr_device::interrupt::Mutex::new(cell::Cell::new(0));
+
+static mut TASKS: Vec<TaskControlBlock, 8> = Vec::new();
 pub trait GlobalLog: Sync {
     fn log(&self, address: u8);
 }
@@ -25,13 +36,13 @@ enum TaskState {
 
 pub struct TaskManager<'a> {
     pub task_control_block: &'a TaskControlBlock,
-    pub task_handler: &'a TaskHandler,
+    pub task_handler: (),
 }
 pub struct TaskControlBlock {
     task_id: u32,
     task_state: TaskState,
     task_priority: &'static usize,
-    task_handler: TaskHandler,
+    task_handler: (),
 }
 
 impl TaskManager<'_> {
@@ -44,18 +55,11 @@ impl TaskManager<'_> {
             let task_priority = &task_control_block.task_priority;
             // ufmt::uwriteln!(serial, "new push task_id = {}", task_id).void_unwrap();
             unsafe {
-                priority_stack.push(task_priority);
+                PRIORITY_STACK.push(task_priority);
             }
         };
     }
 }
-
-static mut priority_stack: Vec<&usize, 8> = Vec::new();
-
-static HIGH_PRIORITY_TASK_ID: avr_device::interrupt::Mutex<cell::Cell<u32>> =
-    avr_device::interrupt::Mutex::new(cell::Cell::new(0));
-
-static mut TASKS: Vec<TaskControlBlock, 8> = Vec::new();
 pub fn context_switch() {
     let running = TaskState::RUNNING;
     let ready = TaskState::READY;
@@ -81,7 +85,7 @@ pub fn context_switch() {
 
 pub fn task_init<W: uWrite<Error = void::Void>>(serial: &mut W) {
     unsafe {
-        if priority_stack.is_empty() {
+        if PRIORITY_STACK.is_empty() {
             all_set_task(serial);
         }
     }
@@ -94,34 +98,31 @@ fn high_priotiry_task_id() -> u32 {
 pub fn start_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     task_init(serial);
 
-    let mut _task_id = high_priotiry_task_id();
+    let mut _task_id = high_priotiry_task_id() as usize;
+
+    if _task_id <= 0 {
+        return;
+    }
 
     ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
-    unsafe {
-        TASKS[_task_id as usize].task_handler.blinker.toggle();
-    }
+    // unsafe { TASKS[_task_id].task_handler }
 }
 
 pub fn get_top_priority() -> usize {
     let max: usize;
     unsafe {
         // 最も優先順位の高いものを検索する
-        match priority_stack.iter().max() {
+        match PRIORITY_STACK.iter().max() {
             Some(n) => max = **n,
             None => unreachable!(),
         };
         // 優先順位の低い順にソートする
-        priority_stack.sort_unstable();
+        PRIORITY_STACK.sort_unstable();
         // 優先順位の最も高い要素のインデックスを取り除く
-        priority_stack.remove(priority_stack.len() - 1);
+        PRIORITY_STACK.remove(PRIORITY_STACK.len() - 1);
         max
     }
 }
-use avr_device::interrupt::Mutex;
-use core::cell::{self, Cell};
-use core::sync::atomic;
-
-static TMR_OVERFLOW: atomic::AtomicBool = atomic::AtomicBool::new(false);
 #[avr_device::interrupt(atmega328p)]
 fn TIMER1_COMPA() {
     // TMR_OVERFLOW.store(true, atomic::Ordering::SeqCst);
@@ -133,40 +134,20 @@ fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     for task in unsafe { &TASKS } {
         let mut task_manager = TaskManager {
             task_control_block: &task,
-            task_handler: &task.task_handler,
+            task_handler: task.task_handler,
         };
         task_manager.update(serial);
     }
 }
-// ユーザー定義の関数
 
-// #[derive(Clone, Copy)]
-pub struct Calc1 {
-    pub width: u32,
-    pub height: u32,
+fn led4(pin: &mut Pin<Output, PD4>) {
+    pin.toggle();
 }
-impl Calc1 {
-    pub fn run(&mut self) -> u32 {
-        self.width * self.height
-    }
+fn led5(pin: &mut Pin<Output, PD5>) {
+    pin.toggle();
 }
-
-use arduino_hal::port::mode::Output;
-use arduino_hal::port::Pin;
-
-// #[derive(Clone, Copy)]
-pub struct Calc2 {
-    pub width: u32,
-    pub height: u32,
-}
-impl Calc2 {
-    pub fn run(&mut self) -> u32 {
-        self.width * self.height
-    }
-}
-// #[derive(Clone, Copy)]
-pub struct TaskHandler {
-    blinker: Pin<Output>,
+fn led6(pin: &mut Pin<Output, PD6>) {
+    pin.toggle();
 }
 
 #[arduino_hal::entry]
@@ -179,49 +160,31 @@ fn main() -> ! {
 
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
 
-    let mut led1 = pins.d13.into_output();
-    let mut led2 = pins.d9.into_output();
-    let mut led3 = pins.d7.into_output();
-    led1.set_high();
-    led2.set_high();
-    led3.set_high();
+    let mut pin4 = pins.d4.into_output();
+    let mut pin5 = pins.d5.into_output();
+    let mut pin6 = pins.d6.into_output();
 
-    // 任意のタスク(縦*横を計算する)を生成
-    let mut calc1 = Calc1 {
-        width: 30,
-        height: 50,
-    };
-    let mut calc2 = Calc2 {
-        width: 10,
-        height: 10,
-    };
     // taskをグローバルなスレッド(context/TaskManager)にpushする
     let mut _task1 = TaskControlBlock {
         task_id: 1,
         task_state: TaskState::READY,
         task_priority: &9,
         // 任意のタスクをハンドラにセットする
-        task_handler: TaskHandler {
-            blinker: led1.downgrade(),
-        },
+        task_handler: led4(&mut pin4),
     };
 
     let mut _task2 = TaskControlBlock {
         task_id: 2,
         task_state: TaskState::READY,
         task_priority: &2,
-        task_handler: TaskHandler {
-            blinker: led2.downgrade(),
-        },
+        task_handler: led5(&mut pin5),
     };
 
     let mut _task3 = TaskControlBlock {
         task_id: 3,
         task_state: TaskState::READY,
         task_priority: &3,
-        task_handler: TaskHandler {
-            blinker: led3.downgrade(),
-        },
+        task_handler: led6(&mut pin6),
     };
 
     ufmt::uwriteln!(serial, "os start").void_unwrap();
