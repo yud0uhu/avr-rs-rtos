@@ -2,7 +2,6 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::hal::delay;
 use arduino_hal::prelude::*;
 use avr_device::atmega328p::tc1::tccr1b::CS1_A;
 use avr_device::atmega328p::TC1;
@@ -52,30 +51,32 @@ impl TaskManager<'_> {
 }
 
 static mut priority_stack: Vec<&usize, 8> = Vec::new();
-static mut high_priority_task_id: u32 = 0;
 
-static mut tasks: Vec<TaskControlBlock, 8> = Vec::new();
+static HIGH_PRIORITY_TASK_ID: avr_device::interrupt::Mutex<cell::Cell<u32>> =
+    avr_device::interrupt::Mutex::new(cell::Cell::new(0));
+
+static mut TASKS: Vec<TaskControlBlock, 8> = Vec::new();
 pub fn context_switch() {
     let running = TaskState::RUNNING;
     let ready = TaskState::READY;
     let top_priority = get_top_priority();
-    unsafe {
-        for tcb_stack in &tasks {
+    avr_device::interrupt::free(|cs| {
+        for tcb_stack in unsafe { &TASKS } {
             let task_id = tcb_stack.task_id;
-            let mut task_state = &tcb_stack.task_state;
-            let mut task_priority = tcb_stack.task_priority;
-            if &top_priority == task_priority {
-                unsafe {
-                    high_priority_task_id = task_id;
-                }
+            let mut _task_state = &tcb_stack.task_state;
+            let mut _task_priority = tcb_stack.task_priority;
+            if &top_priority == _task_priority {
+                avr_device::interrupt::free(|cs| {
+                    HIGH_PRIORITY_TASK_ID.borrow(cs).set(task_id);
+                });
                 // TODO: stateの切り替え(→RUNNING)
-                task_state = &running;
+                _task_state = &running;
                 // unreachable!();
             } else {
-                task_state = &ready;
+                _task_state = &ready;
             }
         }
-    }
+    });
 }
 
 pub fn task_init<W: uWrite<Error = void::Void>>(serial: &mut W) {
@@ -86,18 +87,18 @@ pub fn task_init<W: uWrite<Error = void::Void>>(serial: &mut W) {
     }
 }
 
+fn high_priotiry_task_id() -> u32 {
+    avr_device::interrupt::free(|cs| HIGH_PRIORITY_TASK_ID.borrow(cs).get())
+}
+
 pub fn start_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     task_init(serial);
+
+    let mut _task_id = high_priotiry_task_id();
+
+    ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
     unsafe {
-        if high_priority_task_id == 0 {
-            return;
-        }
-        ufmt::uwriteln!(
-            serial,
-            "current high task priority task_id= {}",
-            high_priority_task_id
-        )
-        .void_unwrap();
+        TASKS[_task_id as usize].task_handler.blinker.toggle();
     }
 }
 
@@ -117,7 +118,7 @@ pub fn get_top_priority() -> usize {
     }
 }
 use avr_device::interrupt::Mutex;
-use core::cell::Cell;
+use core::cell::{self, Cell};
 use core::sync::atomic;
 
 static TMR_OVERFLOW: atomic::AtomicBool = atomic::AtomicBool::new(false);
@@ -128,18 +129,15 @@ fn TIMER1_COMPA() {
 }
 
 fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
-    unsafe {
-        // stackの所有権がtaskに移動しまわないように、参照を借用する
-        for task in &tasks {
-            let mut task_manager = TaskManager {
-                task_control_block: task,
-                task_handler: &task.task_handler,
-            };
-            task_manager.update(serial);
-        }
+    // stackの所有権がtaskに移動しまわないように、参照を借用する
+    for task in unsafe { &TASKS } {
+        let mut task_manager = TaskManager {
+            task_control_block: &task,
+            task_handler: &task.task_handler,
+        };
+        task_manager.update(serial);
     }
 }
-
 // ユーザー定義の関数
 
 // #[derive(Clone, Copy)]
@@ -153,6 +151,9 @@ impl Calc1 {
     }
 }
 
+use arduino_hal::port::mode::Output;
+use arduino_hal::port::Pin;
+
 // #[derive(Clone, Copy)]
 pub struct Calc2 {
     pub width: u32,
@@ -165,7 +166,7 @@ impl Calc2 {
 }
 // #[derive(Clone, Copy)]
 pub struct TaskHandler {
-    pub ans: u32,
+    blinker: Pin<Output>,
 }
 
 #[arduino_hal::entry]
@@ -178,8 +179,12 @@ fn main() -> ! {
 
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
 
-    let mut led = pins.d13.into_output();
-    led.set_high();
+    let mut led1 = pins.d13.into_output();
+    let mut led2 = pins.d9.into_output();
+    let mut led3 = pins.d7.into_output();
+    led1.set_high();
+    led2.set_high();
+    led3.set_high();
 
     // 任意のタスク(縦*横を計算する)を生成
     let mut calc1 = Calc1 {
@@ -191,33 +196,39 @@ fn main() -> ! {
         height: 10,
     };
     // taskをグローバルなスレッド(context/TaskManager)にpushする
-    let task1 = TaskControlBlock {
+    let mut _task1 = TaskControlBlock {
         task_id: 1,
         task_state: TaskState::READY,
         task_priority: &9,
         // 任意のタスクをハンドラにセットする
-        task_handler: TaskHandler { ans: calc1.run() },
+        task_handler: TaskHandler {
+            blinker: led1.downgrade(),
+        },
     };
 
-    let task2 = TaskControlBlock {
+    let mut _task2 = TaskControlBlock {
         task_id: 2,
         task_state: TaskState::READY,
         task_priority: &2,
-        task_handler: TaskHandler { ans: calc2.run() },
+        task_handler: TaskHandler {
+            blinker: led2.downgrade(),
+        },
     };
 
-    let task3 = TaskControlBlock {
+    let mut _task3 = TaskControlBlock {
         task_id: 3,
         task_state: TaskState::READY,
         task_priority: &3,
-        task_handler: TaskHandler { ans: calc2.run() },
+        task_handler: TaskHandler {
+            blinker: led3.downgrade(),
+        },
     };
 
     ufmt::uwriteln!(serial, "os start").void_unwrap();
     unsafe {
-        tasks.push(task1);
-        tasks.push(task2);
-        tasks.push(task3);
+        TASKS.push(_task1);
+        TASKS.push(_task2);
+        TASKS.push(_task3);
     }
 
     let tmr1: TC1 = dp.TC1;
@@ -226,12 +237,6 @@ fn main() -> ! {
         avr_device::interrupt::enable();
     }
 
-    // ufmt::uwriteln!(
-    //     &mut serial,
-    //     "configured timer output compare register = {}",
-    //     tmr1.ocr1a.read().bits()
-    // )
-    // .void_unwrap();
     rig_timer(&tmr1, &mut serial);
     loop {
         start_task(&mut serial);
