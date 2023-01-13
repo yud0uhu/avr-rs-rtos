@@ -14,7 +14,7 @@ use core::cell::{self};
 use arduino_hal::port::mode::Output;
 use arduino_hal::port::Pin;
 
-use arduino_hal::hal::port::{PD4, PD5, PD6};
+use arduino_hal::hal::port::{PD4, PD5, PD6, PD7};
 
 static mut PRIORITY_STACK: Vec<&usize, 8> = Vec::new();
 
@@ -40,13 +40,13 @@ enum TaskState {
 
 pub struct TaskManager<'a> {
     pub task_control_block: &'a TaskControlBlock,
-    pub task_handler: (),
+    pub task_handler: fn(),
 }
 pub struct TaskControlBlock {
     task_id: u32,
     task_state: TaskState,
     task_priority: &'static usize,
-    task_handler: (),
+    task_handler: fn(),
 }
 
 impl TaskManager<'_> {
@@ -109,7 +109,7 @@ pub fn start_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     }
     unsafe {
         let mut vec = TASKS.get_mut();
-        vec[_task_id - 1].task_handler;
+        (vec[_task_id - 1].task_handler)();
     }
     ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
 }
@@ -146,14 +146,18 @@ fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     }
 }
 
-fn led4(pin: &mut Pin<Output, PD4>) {
-    pin.toggle();
-}
-fn led5(pin: &mut Pin<Output, PD5>) {
-    pin.toggle();
-}
-fn led6(pin: &mut Pin<Output, PD6>) {
-    pin.toggle();
+struct Tasks {}
+impl Tasks {
+    pub fn led4() {
+        arduino_hal::delay_ms(50_u16);
+    }
+    pub fn led5() {
+        arduino_hal::delay_ms(50_u16);
+    }
+
+    pub fn led6() {
+        arduino_hal::delay_ms(50_u16);
+    }
 }
 
 #[arduino_hal::entry]
@@ -166,9 +170,9 @@ fn main() -> ! {
 
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
 
-    let mut pin4 = pins.d4.into_output();
-    let mut pin5 = pins.d5.into_output();
-    let mut pin6 = pins.d6.into_output();
+    // let mut pin4 = pins.d4.into_output();
+    // let mut pin5 = pins.d5.into_output();
+    // let pin6 = pins.d6.into_output();
 
     // taskをグローバルなスレッド(context/TaskManager)にpushする
     let mut _task1 = TaskControlBlock {
@@ -176,21 +180,21 @@ fn main() -> ! {
         task_state: TaskState::READY,
         task_priority: &9,
         // 任意のタスクをハンドラにセットする
-        task_handler: led4(&mut pin4),
+        task_handler: Tasks::led4,
     };
 
     let mut _task2 = TaskControlBlock {
         task_id: 2,
         task_state: TaskState::READY,
         task_priority: &2,
-        task_handler: led5(&mut pin5),
+        task_handler: Tasks::led5,
     };
 
     let mut _task3 = TaskControlBlock {
         task_id: 3,
         task_state: TaskState::READY,
         task_priority: &3,
-        task_handler: led6(&mut pin6),
+        task_handler: Tasks::led6,
     };
 
     ufmt::uwriteln!(serial, "os start").void_unwrap();
