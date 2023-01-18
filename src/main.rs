@@ -105,7 +105,7 @@ pub fn start_task<W: uWrite<Error = void::Void>>(
     serial: &mut W,
     pin3: &mut Pin<Output, PD3>,
     pin4: &mut Pin<Output, PD4>,
-    _i_monitor: usize,
+    _i_monitor: u16,
 ) {
     task_init(serial);
 
@@ -201,14 +201,14 @@ impl Tasks {
     pub fn task_pwm<W: uWrite<Error = void::Void>>(
         serial: &mut W,
         pin3: &mut Pin<Output, PD3>,
-        _i_monitor: usize,
+        _i_monitor: u16,
     ) {
         let mut _f_pwm: f32 = 128.0;
-        let mut _i_pwm: usize = 128;
+        let mut _i_pwm: u16 = 128;
         let mut _f_coeff_p: f32 = 0.3;
         let mut _fcoeff_i: f32 = 0.4;
         let mut _fcoeff_d: f32 = 2.8;
-        let mut _i_target: usize = 80;
+        let mut _i_target: u16 = 80;
         let mut _fp_error: f32 = 0.0;
         let mut _fI_error: f32 = 0.0;
         let mut _fd_error: f32 = 0.0;
@@ -221,17 +221,15 @@ impl Tasks {
         _fd_error = _fcoeff_d * (_fp_error - _fp_error_previous);
         _fp_error_previous = _fp_error;
         _f_pwm -= _fp_error + _fI_error + _fd_error;
-        _i_pwm = _f_pwm as usize;
+        _i_pwm = _f_pwm as u16;
 
         pin3.toggle();
 
-        // if _i_pwm > 255 {
-        //     _i_pwm = 255;
-        //     pin3.is_set_high();
-        // } else if _i_pwm < 0 {
-        //     _i_pwm = 0;
-        //     pin3.is_set_low();
-        // }
+        if _i_pwm > 255 {
+            _i_pwm = 255;
+        } else if _i_pwm < 0 {
+            _i_pwm = 0;
+        }
     }
 
     pub fn task_relay<W: uWrite<Error = void::Void>>(serial: &mut W, pin4: &mut Pin<Output, PD4>) {
@@ -282,11 +280,11 @@ fn main() -> ! {
     // let mut pin5 = pins.d5.into_output();
     // let pin6 = pins.d6.into_output();
 
-    let _i_monitor: usize = pin1.analog_read(&mut adc).into();
+    let _i_monitor = pin1.analog_read(&mut adc);
 
-    let task1 = Tasks::task_display();
-    let task2 = Tasks::task_pwm(&mut serial, &mut pin3, _i_monitor);
-    let task3 = Tasks::task_relay(&mut serial, &mut pin4);
+    // let task1 = Tasks::task_display();
+    // let task2 = Tasks::task_pwm(&mut serial, &mut pin3, _i_monitor);
+    // let task3 = Tasks::task_relay(&mut serial, &mut pin4);
 
     ufmt::uwriteln!(serial, "os start={}", _i_monitor).void_unwrap();
     // taskをグローバルなスレッド(context/TaskManager)にpushする
@@ -295,21 +293,21 @@ fn main() -> ! {
         task_state: TaskState::READY,
         task_priority: &9,
         // 任意のタスクをハンドラにセットする
-        task_handler: task1,
+        task_handler: Tasks::task_display(),
     };
 
     let mut _task2 = TaskControlBlock {
         task_id: 2,
         task_state: TaskState::READY,
         task_priority: &2,
-        task_handler: task2,
+        task_handler: Tasks::task_pwm(&mut serial, &mut pin3, _i_monitor),
     };
 
     let mut _task3 = TaskControlBlock {
         task_id: 3,
         task_state: TaskState::READY,
         task_priority: &3,
-        task_handler: task3,
+        task_handler: Tasks::task_relay(&mut serial, &mut pin4),
     };
 
     ufmt::uwriteln!(serial, "os loading").void_unwrap();
