@@ -42,13 +42,13 @@ enum TaskState {
 
 pub struct TaskManager<'a> {
     pub task_control_block: &'a TaskControlBlock,
-    pub task_handler: usize,
+    pub task_handler: (),
 }
 pub struct TaskControlBlock {
     task_id: u32,
     task_state: TaskState,
     task_priority: &'static usize,
-    task_handler: usize,
+    task_handler: (),
 }
 
 impl TaskManager<'_> {
@@ -101,7 +101,12 @@ fn high_priority_task_id() -> u32 {
     avr_device::interrupt::free(|cs| HIGH_PRIORITY_TASK_ID.borrow(cs).get())
 }
 
-pub fn start_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
+pub fn start_task<W: uWrite<Error = void::Void>>(
+    serial: &mut W,
+    pin3: &mut Pin<Output, PD3>,
+    pin4: &mut Pin<Output, PD4>,
+    _i_monitor: usize,
+) {
     task_init(serial);
 
     let mut _task_id = high_priority_task_id() as usize;
@@ -111,9 +116,23 @@ pub fn start_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     }
     unsafe {
         let mut vec = TASKS.get_mut();
-        (vec[_task_id - 1].task_handler);
+        // (vec[_task_id - 1].task_handler)();
+
+        if vec[_task_id - 1].task_id == 1 {
+            Tasks::task_display()
+        } else if vec[_task_id - 1].task_id == 2 {
+            Tasks::task_pwm(serial, pin3, _i_monitor);
+        } else if vec[_task_id - 1].task_id == 3 {
+            Tasks::task_relay(serial, pin4);
+        }
+        ufmt::uwriteln!(
+            serial,
+            "current high task priority task_id= {}",
+            vec[_task_id - 1].task_id
+        )
+        .void_unwrap();
     }
-    ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
+    // ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
 }
 
 pub fn get_top_priority() -> usize {
@@ -181,13 +200,13 @@ impl Tasks {
 
     pub fn task_pwm<W: uWrite<Error = void::Void>>(
         serial: &mut W,
-        pin3: Pin<Output, PD3>,
+        pin3: &mut Pin<Output, PD3>,
         _i_monitor: usize,
-    ) -> usize {
+    ) {
         let mut _f_pwm: f32 = 128.0;
         let mut _i_pwm: usize = 128;
         let mut _f_coeff_p: f32 = 0.3;
-        let mut _fcoeff_I: f32 = 0.4;
+        let mut _fcoeff_i: f32 = 0.4;
         let mut _fcoeff_d: f32 = 2.8;
         let mut _i_target: usize = 80;
         let mut _fp_error: f32 = 0.0;
@@ -196,26 +215,26 @@ impl Tasks {
         let mut _fp_error_previous: f32 = 0.0;
 
         // TODO 255は_i_monitor
-        _fp_error = _f_coeff_p * (255 - _i_target) as f32 / 1.5;
-        _fI_error = _fcoeff_I * _fp_error;
+        let _i_monitor = _i_monitor;
+        _fp_error = _f_coeff_p * (_i_monitor - _i_target) as f32 / 1.5;
+        _fI_error = _fcoeff_i * _fp_error;
         _fd_error = _fcoeff_d * (_fp_error - _fp_error_previous);
         _fp_error_previous = _fp_error;
         _f_pwm -= _fp_error + _fI_error + _fd_error;
         _i_pwm = _f_pwm as usize;
-        if _i_pwm > 255 {
-            pin3.is_set_high();
-            _i_pwm = 255;
-        }
-        if _i_pwm <= 0 {
-            pin3.is_set_low();
-            _i_pwm = 0;
-        }
-        return 0;
+
+        pin3.toggle();
+
+        // if _i_pwm > 255 {
+        //     _i_pwm = 255;
+        //     pin3.is_set_high();
+        // } else if _i_pwm < 0 {
+        //     _i_pwm = 0;
+        //     pin3.is_set_low();
+        // }
     }
-    pub fn task_relay<W: uWrite<Error = void::Void>>(
-        serial: &mut W,
-        pin4: Pin<Output, PD4>,
-    ) -> usize {
+
+    pub fn task_relay<W: uWrite<Error = void::Void>>(serial: &mut W, pin4: &mut Pin<Output, PD4>) {
         unsafe {
             if 128 < THRESHOLD - 1 {
                 _flg = true;
@@ -224,30 +243,24 @@ impl Tasks {
                 _flg = false;
             }
             if _flg == true {
-                pin4.is_set_high();
+                pin4.toggle();
                 ufmt::uwriteln!(serial, "Relay ON Control",).void_unwrap();
                 if _previous_flag == false {
                     _previous_flag = true;
                 }
             }
             if _flg == false {
-                pin4.is_set_low();
+                pin4.toggle();
                 ufmt::uwriteln!(serial, "Relay OFF Control",).void_unwrap();
                 if _previous_flag == true {
                     _previous_flag = false;
                 }
             }
         }
-        return 0;
     }
 
-    pub fn task_display<W: uWrite<Error = void::Void>>(serial: &mut W) -> usize {
+    pub fn task_display() {
         // PWM control
-        unsafe {
-            // TODO
-            // (void)pvParameters;
-        }
-        return 0;
     }
 }
 
@@ -271,6 +284,10 @@ fn main() -> ! {
 
     let _i_monitor: usize = pin1.analog_read(&mut adc).into();
 
+    let task1 = Tasks::task_display();
+    let task2 = Tasks::task_pwm(&mut serial, &mut pin3, _i_monitor);
+    let task3 = Tasks::task_relay(&mut serial, &mut pin4);
+
     ufmt::uwriteln!(serial, "os start={}", _i_monitor).void_unwrap();
     // taskをグローバルなスレッド(context/TaskManager)にpushする
     let mut _task1 = TaskControlBlock {
@@ -278,21 +295,21 @@ fn main() -> ! {
         task_state: TaskState::READY,
         task_priority: &9,
         // 任意のタスクをハンドラにセットする
-        task_handler: Tasks::task_display(&mut serial),
+        task_handler: task1,
     };
 
     let mut _task2 = TaskControlBlock {
         task_id: 2,
         task_state: TaskState::READY,
         task_priority: &2,
-        task_handler: Tasks::task_pwm(&mut serial, pin3, _i_monitor),
+        task_handler: task2,
     };
 
     let mut _task3 = TaskControlBlock {
         task_id: 3,
         task_state: TaskState::READY,
         task_priority: &3,
-        task_handler: Tasks::task_relay(&mut serial, pin4),
+        task_handler: task3,
     };
 
     ufmt::uwriteln!(serial, "os loading").void_unwrap();
@@ -312,7 +329,7 @@ fn main() -> ! {
 
     rig_timer(&tmr1, &mut serial);
     loop {
-        start_task(&mut serial);
+        start_task(&mut serial, &mut pin3, &mut pin4, _i_monitor);
 
         arduino_hal::delay_ms(100);
         avr_device::asm::sleep();
