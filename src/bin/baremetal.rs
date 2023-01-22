@@ -15,6 +15,7 @@ use arduino_hal::adc;
 use arduino_hal::hal::Pins;
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm, Timer2Pwm};
 
+use micromath::F32Ext;
 use ufmt::{uWrite, uwriteln};
 
 #[arduino_hal::entry]
@@ -67,36 +68,46 @@ fn main() -> ! {
 
         arduino_hal::delay_ms(1000);
 
-        task_relay(&mut serial, &mut pin4, _i_pwm);
-
         _i_pwm = task_pwm(values[1]);
         ufmt::uwriteln!(&mut serial, "{}", _i_pwm).void_unwrap();
         d3.set_duty(_i_pwm);
         arduino_hal::delay_ms(1000);
 
+        if _i_pwm < 0 || _i_pwm > 255 {
+            panic!("values is out of range");
+        }
         task_relay(&mut serial, &mut pin4, _i_pwm);
     }
 }
 
 pub fn task_pwm(values: u16) -> u8 {
     let mut _f_pwm: f32 = 128.0;
-    let mut _f_coeff_p: f32 = 0.3;
-    let mut _fcoeff_i: f32 = 0.4;
-    let mut _fcoeff_d: f32 = 2.8;
+    let mut _f_coe_ff_p: f32 = 0.3;
+    let mut _f_coe_ff_i: f32 = 0.4;
+    let mut _f_coe_ff_d: f32 = 2.8;
     let mut _i_target: u16 = 80;
     let mut _fp_error: f32 = 0.0;
     let mut _fi_error: f32 = 0.0;
     let mut _fd_error: f32 = 0.0;
     let mut _fp_error_previous: f32 = 0.0;
 
-    let _i_monitor = values;
-    // NOTE 計算後,f32->u8への型キャストでpanicする
-    // let _fp_error_x = _f_coeff_p * (_i_monitor - _i_target) as f32;
-    // let _fp_error_y = _fp_error_x / 1.5;
-    // _fi_error = _fcoeff_i * _fp_error_y;
-    // _fd_error = _fcoeff_d * (_fp_error_y - _fp_error_previous);
-    // _fp_error_previous = _fp_error_y;
-    // _f_pwm -= _fp_error_y + _fi_error + _fd_error;
+    if values < 0 || values > 255 {
+        panic!("values is out of range");
+    }
+    let mut _i_monitor: u16 = values;
+    if _i_monitor > _i_target {
+        _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
+    } else {
+        // _i_monitor<_i_targetのときに、_fp_errorが負の値になり、その後の計算結果も負の値になり、最終的に_f_pwmが負の値になってしまいフリーズするため_i_monitor-_i_target>0にする
+        _fp_error = _f_coe_ff_p * (_i_target - _i_monitor) as f32 / 1.5;
+    }
+    _fi_error = _f_coe_ff_i * _fp_error;
+    _fd_error = _f_coe_ff_d * (_fp_error - _fp_error_previous);
+    _fp_error_previous = _fp_error;
+    _f_pwm -= _fp_error + _fi_error + _fd_error;
+    // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
+    // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換する
+    _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
 
     return _i_monitor as u8;
 }
