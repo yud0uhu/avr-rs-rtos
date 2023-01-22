@@ -184,9 +184,6 @@ impl Tasks {
         let mut _fd_error: f32 = 0.0;
         let mut _fp_error_previous: f32 = 0.0;
 
-        if values < 0 || values > 255 {
-            panic!("values is out of range");
-        }
         let mut _i_monitor: u16 = values;
         if _i_monitor > _i_target {
             _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
