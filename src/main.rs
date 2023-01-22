@@ -2,18 +2,20 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::hal::Pins;
-use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm};
+use arduino_hal::pac::tc0::tccr0a::WGM0_A;
+use arduino_hal::pac::tc0::tccr0b::CS0_A;
+use arduino_hal::pac::TC0;
+use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer0Pwm, Timer2Pwm};
 use arduino_hal::{prelude::*, Peripherals};
 use avr_device::atmega328p::tc1::tccr1b::CS1_A;
 use avr_device::atmega328p::TC1;
+use core::cell::{self};
+use micromath::F32Ext;
 use panic_halt as _;
 use panic_halt as _;
 use ufmt::{uWrite, uwriteln};
 
-use core::cell::{self};
-
-use arduino_hal::port::mode::{Analog, Output};
+use arduino_hal::port::mode::{Analog, Output, PwmOutput};
 use arduino_hal::port::Pin;
 
 use arduino_hal::hal::port::{PC1, PD3, PD4};
@@ -103,9 +105,10 @@ fn high_priority_task_id() -> u32 {
 
 pub fn start_task<W: uWrite<Error = void::Void>>(
     serial: &mut W,
-    pin3: &mut Pin<Output, PD3>,
     pin4: &mut Pin<Output, PD4>,
+    d3: &mut Pin<PwmOutput<Timer2Pwm>, PD3>,
     _i_monitor: u16,
+    _i_pwm: u8,
 ) {
     task_init(serial);
 
@@ -115,24 +118,24 @@ pub fn start_task<W: uWrite<Error = void::Void>>(
         return;
     }
     unsafe {
-        let mut vec = TASKS.get_mut();
+        let vec = TASKS.get_mut();
         // (vec[_task_id - 1].task_handler)();
 
+        // ufmt::uwriteln!(
+        //     serial,
+        //     "current high task priority task_id= {}",
+        //     vec[_task_id - 1].task_id
+        // )
+        // .void_unwrap();
         if vec[_task_id - 1].task_id == 1 {
             Tasks::task_display()
         } else if vec[_task_id - 1].task_id == 2 {
-            Tasks::task_pwm(serial, pin3, _i_monitor);
+            Tasks::task_pwm(_i_monitor, d3);
         } else if vec[_task_id - 1].task_id == 3 {
-            Tasks::task_relay(serial, pin4);
+            Tasks::task_relay(serial, pin4, _i_pwm);
         }
-        ufmt::uwriteln!(
-            serial,
-            "current high task priority task_id= {}",
-            vec[_task_id - 1].task_id
-        )
-        .void_unwrap();
     }
-    // ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
+    ufmt::uwriteln!(serial, "current high task priority task_id= {}", _task_id).void_unwrap();
 }
 
 pub fn get_top_priority() -> usize {
@@ -150,9 +153,11 @@ pub fn get_top_priority() -> usize {
         max
     }
 }
-#[avr_device::interrupt(atmega328p)]
-fn TIMER1_COMPA() {
-    // TMR_OVERFLOW.store(true, atomic::Ordering::SeqCst);
+
+// 割り込みハンドラ
+// #[avr_device::interrupt(atmega328p)]
+unsafe fn TIMER1_COMPA() {
+    // タスクの切り替え処理
     context_switch();
 }
 
@@ -166,104 +171,79 @@ fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
         task_manager.update(serial);
     }
 }
-
-const THRESHOLD: usize = 100;
-const RELAY_DELAY: usize = 0;
-const PWM_DELAY: usize = 0;
-static mut _flg: bool = true;
-// static mut _f_coeff_p: f32 = 0.3;
-// static mut _fcoeff_I: f32 = 0.4;
-// static mut _fcoeff_d: f32 = 2.8;
-
-// // unsafe
-// static mut _i_target: usize = 80;
-// // static mut _i_pwm: usize = 128;
-// static mut _fp_error: f32 = 0.0;
-// static mut _fI_error: f32 = 0.0;
-// static mut _fd_error: f32 = 0.0;
-// static mut _fp_error_previous: f32 = 0.0;
-static mut _previous_flag: bool = true;
-
 struct Tasks {}
 impl Tasks {
-    pub fn led4() {
-        arduino_hal::delay_ms(50_u16);
-        return Self::led4();
-    }
-    pub fn led5() {
-        arduino_hal::delay_ms(50_u16);
-    }
-
-    pub fn led6() {
-        arduino_hal::delay_ms(50_u16);
-    }
-
-    pub fn task_pwm<W: uWrite<Error = void::Void>>(
-        serial: &mut W,
-        pin3: &mut Pin<Output, PD3>,
-        _i_monitor: u16,
-    ) {
+    pub fn task_pwm(values: u16, d3: &mut Pin<PwmOutput<Timer2Pwm>, PD3>) {
         let mut _f_pwm: f32 = 128.0;
-        let mut _i_pwm: u16 = 128;
-        let mut _f_coeff_p: f32 = 0.3;
-        let mut _fcoeff_i: f32 = 0.4;
-        let mut _fcoeff_d: f32 = 2.8;
+        let mut _f_coe_ff_p: f32 = 0.3;
+        let mut _f_coe_ff_i: f32 = 0.4;
+        let mut _f_coe_ff_d: f32 = 2.8;
         let mut _i_target: u16 = 80;
         let mut _fp_error: f32 = 0.0;
-        let mut _fI_error: f32 = 0.0;
+        let mut _fi_error: f32 = 0.0;
         let mut _fd_error: f32 = 0.0;
         let mut _fp_error_previous: f32 = 0.0;
 
-        // TODO 255は_i_monitor
-        let _i_monitor = _i_monitor;
-        _fp_error = _f_coeff_p * (_i_monitor - _i_target) as f32 / 1.5;
-        _fI_error = _fcoeff_i * _fp_error;
-        _fd_error = _fcoeff_d * (_fp_error - _fp_error_previous);
-        _fp_error_previous = _fp_error;
-        _f_pwm -= _fp_error + _fI_error + _fd_error;
-        _i_pwm = _f_pwm as u16;
-
-        pin3.toggle();
-
-        if _i_pwm > 255 {
-            _i_pwm = 255;
-        } else if _i_pwm < 0 {
-            _i_pwm = 0;
+        if values < 0 || values > 255 {
+            panic!("values is out of range");
         }
+        let mut _i_monitor: u16 = values;
+        if _i_monitor > _i_target {
+            _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
+        } else {
+            // _i_monitor<_i_targetのときに、_fp_errorが負の値になり、その後の計算結果も負の値になり、最終的に_f_pwmが負の値になってしまいフリーズするため_i_monitor-_i_target>0にする
+            _fp_error = _f_coe_ff_p * (_i_target - _i_monitor) as f32 / 1.5;
+        }
+        _fi_error = _f_coe_ff_i * _fp_error;
+        _fd_error = _f_coe_ff_d * (_fp_error - _fp_error_previous);
+        _fp_error_previous = _fp_error;
+        _f_pwm -= _fp_error + _fi_error + _fd_error;
+        // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
+        // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換する
+        _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
+
+        d3.set_duty(_i_monitor as u8);
     }
 
-    pub fn task_relay<W: uWrite<Error = void::Void>>(serial: &mut W, pin4: &mut Pin<Output, PD4>) {
-        unsafe {
-            if 128 < THRESHOLD - 1 {
-                _flg = true;
-            }
-            if 128 > THRESHOLD {
-                _flg = false;
-            }
-            if _flg == true {
-                pin4.toggle();
+    pub fn task_relay<W: uWrite<Error = void::Void>>(
+        serial: &mut W,
+        pin4: &mut Pin<Output, PD4>,
+        _i_pwm: u8,
+    ) {
+        const THRESHOLD: u8 = 100;
+        let mut _flg: bool = true;
+        let mut _previous_flag: bool = true;
+
+        if _i_pwm < THRESHOLD - 1 {
+            _flg = true;
+        }
+        if _i_pwm > THRESHOLD {
+            _flg = false;
+        }
+        if _flg == true {
+            pin4.set_high();
+            if _previous_flag == false {
+                _previous_flag = true;
                 ufmt::uwriteln!(serial, "Relay ON Control",).void_unwrap();
-                if _previous_flag == false {
-                    _previous_flag = true;
-                }
             }
-            if _flg == false {
-                pin4.toggle();
+        } else if _flg == false {
+            pin4.set_low();
+            if _previous_flag == true {
+                _previous_flag = false;
                 ufmt::uwriteln!(serial, "Relay OFF Control",).void_unwrap();
-                if _previous_flag == true {
-                    _previous_flag = false;
-                }
             }
         }
     }
 
     pub fn task_display() {
+
         // PWM control
     }
 }
 
 #[arduino_hal::entry]
 fn main() -> ! {
+    let mut _i_pwm: u8 = 128;
     let dp = arduino_hal::Peripherals::take().unwrap();
 
     let mut pins = arduino_hal::pins!(dp);
@@ -274,19 +254,19 @@ fn main() -> ! {
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
 
-    let mut pin1 = pins.a1.into_analog_input(&mut adc);
-    let mut pin3 = pins.d3.into_output();
+    let mut tmr2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
+    let mut d3 = pins.d3.into_output().into_pwm(&tmr2);
+    d3.enable();
+
     let mut pin4 = pins.d4.into_output();
-    // let mut pin5 = pins.d5.into_output();
-    // let pin6 = pins.d6.into_output();
+    pin4.set_high();
 
-    let _i_monitor = pin1.analog_read(&mut adc);
+    let a1 = pins.a1.into_analog_input(&mut adc);
+    let values: u16 = a1.analog_read(&mut adc);
 
-    // let task1 = Tasks::task_display();
-    // let task2 = Tasks::task_pwm(&mut serial, &mut pin3, _i_monitor);
-    // let task3 = Tasks::task_relay(&mut serial, &mut pin4);
+    ufmt::uwrite!(&mut serial, "A1: {} ", values).void_unwrap();
+    let _i_monitor = 128;
 
-    ufmt::uwriteln!(serial, "os start={}", _i_monitor).void_unwrap();
     // taskをグローバルなスレッド(context/TaskManager)にpushする
     let mut _task1 = TaskControlBlock {
         task_id: 1,
@@ -300,36 +280,36 @@ fn main() -> ! {
         task_id: 2,
         task_state: TaskState::READY,
         task_priority: &2,
-        task_handler: Tasks::task_pwm(&mut serial, &mut pin3, _i_monitor),
+        task_handler: Tasks::task_pwm(values, &mut d3),
     };
 
     let mut _task3 = TaskControlBlock {
         task_id: 3,
         task_state: TaskState::READY,
         task_priority: &3,
-        task_handler: Tasks::task_relay(&mut serial, &mut pin4),
+        task_handler: Tasks::task_relay(&mut serial, &mut pin4, _i_pwm),
     };
 
     ufmt::uwriteln!(serial, "os loading").void_unwrap();
 
     unsafe {
-        let mut vec = TASKS.get_mut();
-
+        let vec = TASKS.get_mut();
         vec.push(_task1);
         vec.push(_task2);
         vec.push(_task3);
     }
 
     let tmr1: TC1 = dp.TC1;
+
+    rig_timer(&tmr1, &mut serial);
+
+    start_task(&mut serial, &mut pin4, &mut d3, values, _i_pwm);
+
     unsafe {
         avr_device::interrupt::enable();
     }
 
-    rig_timer(&tmr1, &mut serial);
     loop {
-        start_task(&mut serial, &mut pin3, &mut pin4, _i_monitor);
-
-        arduino_hal::delay_ms(100);
         avr_device::asm::sleep();
     }
 }
@@ -364,13 +344,15 @@ pub fn rig_timer<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
         }
     };
 
-    let ticks = calc_overflow(ARDUINO_UNO_CLOCK_FREQUENCY_HZ, 4, clock_divisor) as u16;
-    ufmt::uwriteln!(
-        serial,
-        "configuring timer output compare register = {}",
-        ticks
-    )
-    .void_unwrap();
+    // 1秒周期に設定
+    let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor) as u16;
+    // let ticks = calc_overflow(ARDUINO_UNO_CLOCK_FREQUENCY_HZ, 4, clock_divisor) as u16;
+    // ufmt::uwriteln!(
+    //     serial,
+    //     "configuring timer output compare register = {}",
+    //     ticks
+    // )
+    // .void_unwrap();
 
     tmr1.tccr1a.write(|w| w.wgm1().bits(0b00));
     tmr1.tccr1b.write(|w| {
@@ -380,8 +362,7 @@ pub fn rig_timer<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
             .wgm1()
             .bits(0b01)
     });
-    // TCCR1B |= _BV(CS12);  // 256分周, CTCモード
-    // TIMSK1 |= _BV(TOIE1); // オーバーフロー割り込みを許可
+    // 1秒周期の割り込みを設定
     tmr1.ocr1a.write(|w| unsafe { w.bits(ticks) });
-    tmr1.timsk1.write(|w| w.ocie1a().set_bit()); //enable this specific interrupt
+    tmr1.timsk1.write(|w| w.ocie1a().set_bit()); // オーバーフロー割り込みを許可
 }
