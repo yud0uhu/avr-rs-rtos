@@ -4,7 +4,7 @@
 
 use arduino_hal::hal::delay;
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm};
-use arduino_hal::{delay_ms, prelude::*};
+use arduino_hal::{delay_ms, prelude::*, Delay};
 use avr_device::atmega328p::tc1::tccr1b::CS1_A;
 use avr_device::atmega328p::TC1;
 use core::cell::{self};
@@ -134,7 +134,7 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_monitor: u16, 
                 vec[_task_id - 1].task_handler;
             }
         }
-        delay_ms(1000);
+        os_delay(1000);
 
         unsafe {
             COUNT += 1;
@@ -143,6 +143,10 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_monitor: u16, 
             }
         }
     }
+}
+
+pub fn os_delay(ms: u16) {
+    Delay::new().delay_ms(ms)
 }
 
 /**
@@ -197,9 +201,7 @@ impl Tasks for TaskPwm {
         let d3 = &mut self.d3;
 
         let values = self.values;
-        // if values < 0 || values > 255 {
-        //     panic!("values is out of range");
-        // }
+
         let mut _i_monitor: u16 = values;
         if _i_monitor > _i_target {
             _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
@@ -352,14 +354,6 @@ fn main() -> ! {
     }
 }
 
-pub const fn calc_overflow(clock_hz: u32, target_hz: u32, prescale: u32) -> u32 {
-    /*
-    https://github.com/Rahix/avr-hal/issues/75
-    reversing the formula F = 16 MHz / (256 * (1 + 15624)) = 4 Hz
-     */
-    clock_hz / target_hz / prescale - 1
-}
-
 pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     /*
      https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf
@@ -384,7 +378,6 @@ pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
 
     // 1秒周期に設定
     let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor) as u16;
-    // let ticks = calc_overflow(ARDUINO_UNO_CLOCK_FREQUENCY_HZ, 4, clock_divisor) as u16;
     ufmt::uwriteln!(
         serial,
         "configuring timer output compare register = {}",
