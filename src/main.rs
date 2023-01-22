@@ -199,7 +199,10 @@ impl Tasks {
         _fp_error_previous = _fp_error;
         _f_pwm -= _fp_error + _fi_error + _fd_error;
         // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
-        // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換する
+        // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換・0以上255以下に制限する
+        // 以下のようにして、_i_monitor変数に対して_f_pwm.round() as u16から得られた値を四捨五入し、0以上255以下に制限する処理を行う
+        // 1. _i_monitor.max(): _i_monitor変数と_f_pwmの四捨五入した値をu16型にキャストした値を比較し、値の大きい方を_i_monitorに代入
+        // 2. _i_monitor.min(): _i_monitor変数と255を比較し、値の小さい方を_i_monitorに代入
         _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
 
         d3.set_duty(_i_monitor as u8);
