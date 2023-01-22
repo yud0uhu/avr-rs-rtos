@@ -19,6 +19,7 @@ pwm-pca9685 = "0.3.1"
 infrared = "0.14.1"
 embedded-storage = "0.2"
 heapless = { version = "0.7.16" }
+micromath = "2.0.0"
 
 [dependencies.arduino-hal]
 git = "https://github.com/rahix/avr-hal"
@@ -48,3 +49,4 @@ default-features = false
 [dependencies.void]
 version = "*"
 default-features = false
+
