@@ -6,11 +6,21 @@ use panic_halt as _;
 use panic_halt as _;
 use ufmt::{uWrite, uwriteln};
 
+/**
+ * 優先順位スタックから最も優先度が高く(1~9で最も数字の大きいもの)設定されているタスクID
+ */
 pub static HIGH_PRIORITY_TASK_ID: avr_device::interrupt::Mutex<cell::Cell<u32>> =
     avr_device::interrupt::Mutex::new(cell::Cell::new(0));
+
+/**
+ * 優先順位スタックから最も優先度が高く(1~9で最も数字の大きいもの)設定されているタスクIDを取得する関数
+ */
 pub fn high_priority_task_id() -> u32 {
     avr_device::interrupt::free(|cs| HIGH_PRIORITY_TASK_ID.borrow(cs).get())
 }
+/**
+ * 1秒周期のタイマー割り込みをセットする関数。タスクを設定後に宣言して使う。タイマー1のインスタンス変数を第1引数に渡す
+ */
 pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     /*
      https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf

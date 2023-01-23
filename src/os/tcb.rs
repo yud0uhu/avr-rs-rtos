@@ -11,7 +11,6 @@ pub enum TaskState {
 
 pub static mut PRIORITY_STACK: Vec<&usize, 8> = Vec::new();
 
-use arduino_hal::prelude::*;
 pub use heapless::Vec; // fixed capacity `std::Vec`
 
 use panic_halt as _;

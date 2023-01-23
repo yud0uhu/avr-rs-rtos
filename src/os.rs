@@ -11,10 +11,9 @@ pub mod tcb;
 
 pub static mut TASKS: Mutex<tcb::Vec<tcb::TaskControlBlock, 8>> = Mutex::new(tcb::Vec::new());
 
-pub trait GlobalLog: Sync {
-    fn log(&self, address: u8);
-}
-
+/**
+ * TCBスタックから最も優先度が高く設定されているタスクIDを取得し、そのタスクの状態をRUNNING(実行可能)に、それ以外のタスクのステートをREADY(実行待ち)に設定する関数
+ */
 pub fn context_switch() {
     let running = tcb::TaskState::RUNNING;
     let ready = tcb::TaskState::READY;
@@ -45,21 +44,12 @@ pub fn task_init<W: uWrite<Error = void::Void>>(serial: &mut W) {
     }
 }
 
-pub fn task_reload(
-    _task1: tcb::TaskControlBlock,
-    _task2: tcb::TaskControlBlock,
-    _task3: tcb::TaskControlBlock,
-) {
-    unsafe {
-        let vec = TASKS.get_mut();
-        vec.push(_task1);
-        vec.push(_task2);
-        vec.push(_task3);
-    }
-}
-
 static mut MAX_TACK_ID: usize = 3;
 static mut COUNT: usize = 0;
+
+/**
+ * タスクの初期化(TCBスタックに登録)後、コンテキストスイッチを1秒周期(1000ms)で実行し、優先順位順に実行可能タスクを切り替える関数
+ */
 pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_monitor: u16, _i_pwm: u8) {
     task_init(serial);
 
@@ -118,6 +108,9 @@ pub fn get_top_priority() -> usize {
     }
 }
 
+/**
+ * 新規登録されたタスクをスタックから取得し、更新するための関数
+ */
 fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
     // stackの所有権がtaskに移動しまわないように、参照を借用する
     for task in unsafe { TASKS.get_mut() } {

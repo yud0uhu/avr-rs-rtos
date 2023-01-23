@@ -16,6 +16,19 @@ use arduino_hal::hal::port::{PD3, PD4};
 
 mod os;
 
+pub fn task_reload(
+    _task1: os::tcb::TaskControlBlock,
+    _task2: os::tcb::TaskControlBlock,
+    _task3: os::tcb::TaskControlBlock,
+) {
+    unsafe {
+        let vec = os::TASKS.get_mut();
+        vec.push(_task1);
+        vec.push(_task2);
+        vec.push(_task3);
+    }
+}
+
 trait Tasks {
     fn call(&mut self);
     fn init(&mut self);
@@ -173,7 +186,7 @@ fn main() -> ! {
 
     let tmr1: TC1 = dp.TC1;
 
-    os::task_reload(_task1, _task2, _task3);
+    task_reload(_task1, _task2, _task3);
 
     os::os_timer::timer_create(&tmr1, &mut serial);
 
