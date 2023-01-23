@@ -35,7 +35,7 @@ impl TaskManager<'_> {
             let task_priority = &task_control_block.task_priority;
             // uwriteln!(serial, "new push task_id = {}", task_priority).void_unwrap();
             unsafe {
-                PRIORITY_STACK.push(task_priority);
+                PRIORITY_STACK.push_unchecked(task_priority);
             }
         };
     }

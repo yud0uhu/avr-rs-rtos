@@ -59,7 +59,7 @@ impl TaskManager<'_> {
             let task_priority = &task_control_block.task_priority;
             // ufmt::uwriteln!(serial, "new push task_id = {}", task_id).void_unwrap();
             unsafe {
-                PRIORITY_STACK.push(task_priority);
+                PRIORITY_STACK.push_unchecked(task_priority);
             }
         };
     }

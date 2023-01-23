@@ -57,7 +57,7 @@ impl TaskManager<'_> {
             let task_priority = &task_control_block.task_priority;
             ufmt::uwriteln!(serial, "new push task_id = {}", task_priority).void_unwrap();
             unsafe {
-                PRIORITY_STACK.push(task_priority);
+                PRIORITY_STACK.push_unchecked(task_priority);
             }
         };
     }
@@ -100,9 +100,9 @@ fn high_priority_task_id() -> u32 {
 pub fn task_reload(_task1: TaskControlBlock, _task2: TaskControlBlock, _task3: TaskControlBlock) {
     unsafe {
         let vec = TASKS.get_mut();
-        vec.push(_task1);
-        vec.push(_task2);
-        vec.push(_task3);
+        vec.push_unchecked(_task1);
+        vec.push_unchecked(_task2);
+        vec.push_unchecked(_task3);
     }
 }
 
@@ -275,7 +275,7 @@ fn main() -> ! {
     let mut _i_pwm: u8 = 128;
     let dp = arduino_hal::Peripherals::take().unwrap();
 
-    let mut pins = arduino_hal::pins!(dp);
+    let pins = arduino_hal::pins!(dp);
     dp.EXINT.eicra.modify(|_, w| w.isc0().bits(0x02));
     // Enable the INT0 interrupt source.
     dp.EXINT.eimsk.modify(|_, w| w.int0().set_bit());

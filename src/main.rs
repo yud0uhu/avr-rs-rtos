@@ -16,6 +16,9 @@ use arduino_hal::hal::port::{PD3, PD4};
 
 mod os;
 
+/**
+ * タスクをセットする関数
+ */
 pub fn task_reload(
     _task1: os::tcb::TaskControlBlock,
     _task2: os::tcb::TaskControlBlock,
@@ -23,9 +26,9 @@ pub fn task_reload(
 ) {
     unsafe {
         let vec = os::TASKS.get_mut();
-        vec.push(_task1);
-        vec.push(_task2);
-        vec.push(_task3);
+        vec.push_unchecked(_task1);
+        vec.push_unchecked(_task2);
+        vec.push_unchecked(_task3);
     }
 }
 
