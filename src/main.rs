@@ -52,6 +52,10 @@ impl Tasks for TaskPwm {
 
         let values = self.values;
 
+        if values > 255 {
+            d3.set_duty(255);
+        }
+
         let mut _i_monitor: u16 = values;
         if _i_monitor > _i_target {
             _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
@@ -63,13 +67,16 @@ impl Tasks for TaskPwm {
         _fd_error = _f_coe_ff_d * (_fp_error - _fp_error_previous);
         _fp_error_previous = _fp_error;
         _f_pwm -= _fp_error + _fi_error + _fd_error;
-        // // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
-        // // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換・0以上255以下に制限する
-        // // 以下のようにして、_i_monitor変数に対して_f_pwm.round() as u16から得られた値を四捨五入し、0以上255以下に制限する処理を行う
-        // // 1. _i_monitor.max(): _i_monitor変数と_f_pwmの四捨五入した値をu16型にキャストした値を比較し、値の大きい方を_i_monitorに代入
-        // // 2. _i_monitor.min(): _i_monitor変数と255を比較し、値の小さい方を_i_monitorに代入
+        // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
+        // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換・0以上255以下に制限する
+        // 以下のようにして、_i_monitor変数に対して_f_pwm.round() as u16から得られた値を四捨五入し、0以上255以下に制限する処理を行う
+        // 1. _i_monitor.max(): _i_monitor変数と_f_pwmの四捨五入した値をu16型にキャストした値を比較し、値の大きい方を_i_monitorに代入
+        // 2. _i_monitor.min(): _i_monitor変数と255を比較し、値の小さい方を_i_monitorに代入
         _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
 
+        if _i_monitor > 255 {
+            d3.set_duty(255);
+        }
         d3.set_duty(_i_monitor as u8);
     }
 
@@ -82,7 +89,7 @@ impl Tasks for TaskRelay {
         // let serial = self.serial;
         let _i_pwm = self._i_pwm;
 
-        const THRESHOLD: u8 = 100;
+        const THRESHOLD: u16 = 100;
         let mut _flg: bool = true;
         let mut _previous_flag: bool = true;
 
@@ -120,25 +127,25 @@ struct TaskPwm {
 
 struct TaskRelay {
     pin4: Pin<Output, PD4>,
-    _i_pwm: u8,
+    _i_pwm: u16,
 }
 
 struct TaskDisplay {}
 
 #[arduino_hal::entry]
 fn main() -> ! {
-    let mut _i_pwm: u8 = 128;
+    let mut _i_pwm: u16 = 128;
     let dp = arduino_hal::Peripherals::take().unwrap();
 
-    let mut pins = arduino_hal::pins!(dp);
-    dp.EXINT.eicra.modify(|_, w| w.isc0().bits(0x02));
+    let pins = arduino_hal::pins!(dp);
+    // dp.EXINT.eicra.modify(|_, w| w.isc0().bits(0x02));
     // Enable the INT0 interrupt source.
-    dp.EXINT.eimsk.modify(|_, w| w.int0().set_bit());
+    // dp.EXINT.eimsk.modify(|_, w| w.int0().set_bit());
 
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
 
-    let mut tmr2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
+    let tmr2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
     let mut d3 = pins.d3.into_output().into_pwm(&tmr2);
     d3.enable();
 
@@ -146,12 +153,12 @@ fn main() -> ! {
     pin4.set_high();
 
     let a1 = pins.a1.into_analog_input(&mut adc);
-    let values: u16 = a1.analog_read(&mut adc);
+    _i_pwm = a1.analog_read(&mut adc) + 50;
 
-    uwriteln!(&mut serial, "A1: {} ", values).void_unwrap();
+    uwriteln!(&mut serial, "A1: {} ", _i_pwm).void_unwrap();
     // let _i_monitor = 128;
     let mut task_pwm = TaskPwm {
-        values: values,
+        values: _i_pwm,
         d3: d3,
     };
 
@@ -193,7 +200,7 @@ fn main() -> ! {
 
     os::os_timer::timer_create(&tmr1, &mut serial);
 
-    os::os_start(&mut serial, values, _i_pwm);
+    os::os_start(&mut serial, _i_pwm);
 
     unsafe {
         avr_device::interrupt::enable();

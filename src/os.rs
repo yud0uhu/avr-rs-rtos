@@ -19,21 +19,19 @@ pub fn context_switch() {
     let ready = tcb::TaskState::READY;
     let top_priority = get_top_priority();
 
-    avr_device::interrupt::free(|cs| {
-        for tcb_stack in unsafe { TASKS.get_mut() } {
-            let task_id = tcb_stack.task_id;
-            let mut _task_state = &tcb_stack.task_state;
-            let task_priority = tcb_stack.task_priority;
-            if task_priority == &top_priority {
-                avr_device::interrupt::free(|cs| {
-                    os_timer::HIGH_PRIORITY_TASK_ID.borrow(cs).set(task_id);
-                });
-                _task_state = &running;
-            } else {
-                _task_state = &ready;
-            }
+    for tcb_stack in unsafe { TASKS.get_mut() } {
+        let task_id = tcb_stack.task_id;
+        let mut _task_state = &tcb_stack.task_state;
+        let task_priority = tcb_stack.task_priority;
+        if task_priority == &top_priority {
+            avr_device::interrupt::free(|cs| {
+                os_timer::HIGH_PRIORITY_TASK_ID.borrow(cs).set(task_id);
+            });
+            _task_state = &running;
+        } else {
+            _task_state = &ready;
         }
-    });
+    }
 }
 
 pub fn task_init<W: uWrite<Error = void::Void>>(serial: &mut W) {
@@ -50,7 +48,7 @@ static mut COUNT: usize = 0;
 /**
  * タスクの初期化(TCBスタックに登録)後、コンテキストスイッチを1秒周期(1000ms)で実行し、優先順位順に実行可能タスクを切り替える関数
  */
-pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_monitor: u16, _i_pwm: u8) {
+pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_pwm: u16) {
     task_init(serial);
 
     while unsafe { COUNT < MAX_TACK_ID } {
@@ -60,18 +58,17 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_monitor: u16, 
         unsafe {
             let vec = TASKS.get_mut();
 
-            uwriteln!(
-                serial,
-                "current high task priority task_id= {}",
-                vec[_task_id - 1].task_id
-            )
-            .void_unwrap();
-
-            if vec[_task_id - 1].task_state == tcb::TaskState::RUNNING {
+            if vec[_task_id - 1].task_state == tcb::TaskState::READY {
+                uwriteln!(
+                    serial,
+                    "current high task priority task_id= {}",
+                    vec[_task_id - 1].task_id
+                )
+                .void_unwrap();
                 vec[_task_id - 1].task_handler;
             }
         }
-        os_delay(1000);
+        os_delay(100);
 
         unsafe {
             COUNT += 1;
@@ -103,7 +100,6 @@ pub fn get_top_priority() -> usize {
         tcb::PRIORITY_STACK.sort_unstable();
         // 優先順位の最も高い要素のインデックスを取り除く
         tcb::PRIORITY_STACK.remove(tcb::PRIORITY_STACK.len() - 1);
-
         max
     }
 }
