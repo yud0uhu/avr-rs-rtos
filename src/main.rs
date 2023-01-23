@@ -2,183 +2,30 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::hal::delay;
+use arduino_hal::prelude::*;
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm};
-use arduino_hal::{delay_ms, prelude::*, Delay};
-use avr_device::atmega328p::tc1::tccr1b::CS1_A;
 use avr_device::atmega328p::TC1;
-use core::cell::{self};
 use micromath::F32Ext;
 use panic_halt as _;
-use panic_halt as _;
-use ufmt::{uWrite, uwriteln};
+use ufmt::uwriteln;
 
 use arduino_hal::port::mode::{Output, PwmOutput};
 use arduino_hal::port::Pin;
 
 use arduino_hal::hal::port::{PD3, PD4};
 
-static mut PRIORITY_STACK: Vec<&usize, 8> = Vec::new();
+mod os;
 
-static HIGH_PRIORITY_TASK_ID: avr_device::interrupt::Mutex<cell::Cell<u32>> =
-    avr_device::interrupt::Mutex::new(cell::Cell::new(0));
-
-extern crate avr_device as device;
-use device::interrupt::Mutex;
-
-static mut TASKS: Mutex<Vec<TaskControlBlock, 8>> = Mutex::new(Vec::new());
-
-pub trait GlobalLog: Sync {
-    fn log(&self, address: u8);
-}
-
-use heapless::Vec; // fixed capacity `std::Vec`
-
-#[derive(PartialEq)]
-enum TaskState {
-    RUNNING,
-    READY,
-    SUSPEND,
-}
-
-pub struct TaskManager<'a> {
-    pub task_control_block: &'a TaskControlBlock,
-    pub task_handler: (),
-}
-pub struct TaskControlBlock {
-    task_id: u32,
-    task_state: TaskState,
-    task_priority: &'static usize,
-    task_handler: (),
-}
-
-impl TaskManager<'_> {
-    pub fn update<W: uWrite<Error = void::Void>>(&mut self, serial: &mut W) {
-        {
-            let task_control_block: &TaskControlBlock = &self.task_control_block;
-            let _serial: &mut W = serial;
-            let _task_id: &u32 = &task_control_block.task_id;
-            // let task_state = &task_control_block.task_state;
-            let task_priority = &task_control_block.task_priority;
-            ufmt::uwriteln!(serial, "new push task_id = {}", task_priority).void_unwrap();
-            unsafe {
-                PRIORITY_STACK.push(task_priority);
-            }
-        };
-    }
-}
-pub fn context_switch() {
-    let running = TaskState::RUNNING;
-    let ready = TaskState::READY;
-    let top_priority = get_top_priority();
-
-    avr_device::interrupt::free(|cs| {
-        for tcb_stack in unsafe { TASKS.get_mut() } {
-            let task_id = tcb_stack.task_id;
-            let mut _task_state = &tcb_stack.task_state;
-            let task_priority = tcb_stack.task_priority;
-            if task_priority == &top_priority {
-                avr_device::interrupt::free(|cs| {
-                    HIGH_PRIORITY_TASK_ID.borrow(cs).set(task_id);
-                });
-                // TODO: stateの切り替え(→RUNNING)
-                _task_state = &running;
-            } else {
-                _task_state = &ready;
-            }
-        }
-    });
-}
-
-pub fn task_init<W: uWrite<Error = void::Void>>(serial: &mut W) {
+pub fn task_reload(
+    _task1: os::tcb::TaskControlBlock,
+    _task2: os::tcb::TaskControlBlock,
+    _task3: os::tcb::TaskControlBlock,
+) {
     unsafe {
-        if PRIORITY_STACK.is_empty() {
-            all_set_task(serial);
-        }
-    }
-}
-
-fn high_priority_task_id() -> u32 {
-    avr_device::interrupt::free(|cs| HIGH_PRIORITY_TASK_ID.borrow(cs).get())
-}
-
-pub fn task_reload(_task1: TaskControlBlock, _task2: TaskControlBlock, _task3: TaskControlBlock) {
-    unsafe {
-        let vec = TASKS.get_mut();
+        let vec = os::TASKS.get_mut();
         vec.push(_task1);
         vec.push(_task2);
         vec.push(_task3);
-    }
-}
-
-static mut MAX_TACK_ID: usize = 3;
-static mut COUNT: usize = 0;
-pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_monitor: u16, _i_pwm: u8) {
-    task_init(serial);
-
-    while unsafe { COUNT < MAX_TACK_ID } {
-        // 割り込みハンドラ
-        context_switch();
-        let mut _task_id = high_priority_task_id() as usize;
-        unsafe {
-            let vec = TASKS.get_mut();
-
-            ufmt::uwriteln!(
-                serial,
-                "current high task priority task_id= {}",
-                vec[_task_id - 1].task_id
-            )
-            .void_unwrap();
-
-            if vec[_task_id - 1].task_state == TaskState::RUNNING {
-                vec[_task_id - 1].task_handler;
-            }
-        }
-        os_delay(1000);
-
-        unsafe {
-            COUNT += 1;
-            if COUNT >= MAX_TACK_ID {
-                break;
-            }
-        }
-    }
-}
-
-pub fn os_delay(ms: u16) {
-    Delay::new().delay_ms(ms)
-}
-
-/**
- * PRIORITY_STACKから最大値を取得し、その値を返す関数
- * PRIORITY_STACKが空の場合にはNoneが返されるため、max = **nの行が実行されず、maxは初期値である1を返す
- * */
-pub fn get_top_priority() -> usize {
-    // match文の返り値を参照で取得する
-    let max: usize;
-    unsafe {
-        // 最も優先順位の高いものを検索する
-        match PRIORITY_STACK.iter().max() {
-            Some(n) => max = **n,
-            None => unreachable!(),
-        };
-        // 優先順位の低い順にソートする
-        PRIORITY_STACK.sort_unstable();
-        // 優先順位の最も高い要素のインデックスを取り除く
-        PRIORITY_STACK.remove(PRIORITY_STACK.len() - 1);
-
-        max
-    }
-}
-
-fn all_set_task<W: uWrite<Error = void::Void>>(serial: &mut W) {
-    // stackの所有権がtaskに移動しまわないように、参照を借用する
-    for task in unsafe { TASKS.get_mut() } {
-        let mut task_manager = TaskManager {
-            task_control_block: &task,
-            task_handler: task.task_handler,
-        };
-        task_manager.update(serial);
     }
 }
 
@@ -246,13 +93,13 @@ impl Tasks for TaskRelay {
             pin4.set_high();
             if _previous_flag == false {
                 _previous_flag = true;
-                // ufmt::uwriteln!(serial, "Relay ON Control",).void_unwrap();
+                // uwriteln!(serial, "Relay ON Control",).void_unwrap();
             }
         } else if _flg == false {
             pin4.set_low();
             if _previous_flag == true {
                 _previous_flag = false;
-                // ufmt::uwriteln!(serial, "Relay OFF Control",).void_unwrap();
+                // uwriteln!(serial, "Relay OFF Control",).void_unwrap();
             }
         }
     }
@@ -298,7 +145,7 @@ fn main() -> ! {
     let a1 = pins.a1.into_analog_input(&mut adc);
     let values: u16 = a1.analog_read(&mut adc);
 
-    ufmt::uwrite!(&mut serial, "A1: {} ", values).void_unwrap();
+    uwriteln!(&mut serial, "A1: {} ", values).void_unwrap();
     // let _i_monitor = 128;
     let mut task_pwm = TaskPwm {
         values: values,
@@ -313,37 +160,37 @@ fn main() -> ! {
     let mut task_display = TaskDisplay {};
 
     // taskをグローバルなスレッド(context/TaskManager)にpushする
-    let mut _task1 = TaskControlBlock {
+    let mut _task1 = os::tcb::TaskControlBlock {
         task_id: 1,
-        task_state: TaskState::READY,
+        task_state: os::tcb::TaskState::READY,
         task_priority: &9,
         // 任意のタスクをハンドラにセットする
         task_handler: task_display.call(),
     };
 
-    let mut _task2 = TaskControlBlock {
+    let mut _task2 = os::tcb::TaskControlBlock {
         task_id: 2,
-        task_state: TaskState::READY,
+        task_state: os::tcb::TaskState::READY,
         task_priority: &2,
         task_handler: task_pwm.call(),
     };
 
-    let mut _task3 = TaskControlBlock {
+    let mut _task3 = os::tcb::TaskControlBlock {
         task_id: 3,
-        task_state: TaskState::READY,
+        task_state: os::tcb::TaskState::READY,
         task_priority: &3,
         task_handler: task_relay.call(),
     };
 
-    ufmt::uwriteln!(serial, "os loading").void_unwrap();
+    uwriteln!(serial, "os loading").void_unwrap();
 
     let tmr1: TC1 = dp.TC1;
 
     task_reload(_task1, _task2, _task3);
 
-    timer_create(&tmr1, &mut serial);
+    os::os_timer::timer_create(&tmr1, &mut serial);
 
-    os_start(&mut serial, values, _i_pwm);
+    os::os_start(&mut serial, values, _i_pwm);
 
     unsafe {
         avr_device::interrupt::enable();
@@ -352,48 +199,4 @@ fn main() -> ! {
     loop {
         avr_device::asm::sleep();
     }
-}
-
-pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
-    /*
-     https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf
-     section 15.11
-    */
-    use arduino_hal::clock::Clock;
-
-    const ARDUINO_UNO_CLOCK_FREQUENCY_HZ: u32 = arduino_hal::DefaultClock::FREQ;
-    const CLOCK_SOURCE: CS1_A = CS1_A::PRESCALE_256;
-    let clock_divisor: u32 = match CLOCK_SOURCE {
-        CS1_A::DIRECT => 1,
-        CS1_A::PRESCALE_8 => 8,
-        CS1_A::PRESCALE_64 => 64,
-        CS1_A::PRESCALE_256 => 256,
-        CS1_A::PRESCALE_1024 => 1024,
-        CS1_A::NO_CLOCK | CS1_A::EXT_FALLING | CS1_A::EXT_RISING => {
-            uwriteln!(serial, "uhoh, code tried to set the clock source to something other than a static prescaler {}", CLOCK_SOURCE as usize)
-                .void_unwrap();
-            1
-        }
-    };
-
-    // 1秒周期に設定
-    let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor) as u16;
-    ufmt::uwriteln!(
-        serial,
-        "configuring timer output compare register = {}",
-        ticks
-    )
-    .void_unwrap();
-
-    tmr1.tccr1a.write(|w| w.wgm1().bits(0b00));
-    tmr1.tccr1b.write(|w| {
-        w.cs1()
-            //.prescale_256()
-            .variant(CLOCK_SOURCE)
-            .wgm1()
-            .bits(0b01)
-    });
-    // 1秒周期の割り込みを設定
-    tmr1.ocr1a.write(|w| unsafe { w.bits(ticks) });
-    tmr1.timsk1.write(|w| w.ocie1a().set_bit()); // オーバーフロー割り込みを許可
 }
