@@ -43,7 +43,7 @@ fn main() -> ! {
     let a4 = pins.a4.into_analog_input(&mut adc);
     let a5 = pins.a5.into_analog_input(&mut adc);
 
-    let mut tmr2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
+    let tmr2 = Timer2Pwm::new(dp.TC2, Prescaler::Prescale64);
     let mut d3 = pins.d3.into_output().into_pwm(&tmr2);
     d3.enable();
 
@@ -66,16 +66,16 @@ fn main() -> ! {
 
         ufmt::uwriteln!(&mut serial, "").void_unwrap();
 
-        arduino_hal::delay_ms(1000);
+        arduino_hal::delay_ms(100);
 
-        _i_pwm = task_pwm(values[1]);
+        // アナログピンから読み取れる電圧が微弱すぎるため暫定的に+10
+        _i_pwm = task_pwm(values[1] + 10);
+
         ufmt::uwriteln!(&mut serial, "{}", _i_pwm).void_unwrap();
-        d3.set_duty(_i_pwm);
-        arduino_hal::delay_ms(1000);
 
-        if _i_pwm < 0 || _i_pwm > 255 {
-            panic!("values is out of range");
-        }
+        d3.set_duty(_i_pwm);
+        arduino_hal::delay_ms(100);
+
         task_relay(&mut serial, &mut pin4, _i_pwm);
     }
 }
@@ -91,8 +91,8 @@ pub fn task_pwm(values: u16) -> u8 {
     let mut _fd_error: f32 = 0.0;
     let mut _fp_error_previous: f32 = 0.0;
 
-    if values < 0 || values > 255 {
-        panic!("values is out of range");
+    if values > 255 {
+        return 255;
     }
     let mut _i_monitor: u16 = values;
     if _i_monitor > _i_target {
@@ -108,6 +108,10 @@ pub fn task_pwm(values: u16) -> u8 {
     // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
     // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換する
     _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
+
+    if _i_monitor > 255 {
+        return 255;
+    }
 
     return _i_monitor as u8;
 }
@@ -133,7 +137,8 @@ pub fn task_relay<W: uWrite<Error = void::Void>>(
             _previous_flag = true;
             ufmt::uwriteln!(serial, "Relay ON Control",).void_unwrap();
         }
-    } else if _flg == false {
+    }
+    if _flg == false {
         pin4.set_low();
         if _previous_flag == true {
             _previous_flag = false;
