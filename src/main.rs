@@ -70,7 +70,7 @@ impl Tasks for TaskPwm {
         // // 2. _i_monitor.min(): _i_monitor変数と255を比較し、値の小さい方を_i_monitorに代入
         _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
 
-        d3.set_duty(255);
+        d3.set_duty(_i_monitor as u8);
     }
 
     fn init(&mut self) {}
