@@ -35,6 +35,12 @@ impl TaskManager<'_> {
             let task_priority = &task_control_block.task_priority;
             // uwriteln!(serial, "new push task_id = {}", task_priority).void_unwrap();
             unsafe {
+                /*
+                 * DOC: https://docs.rs/arrayvec/0.6.0/arrayvec/struct.ArrayVec.html#method.push_unchecked
+                 * Push element to the end of the vector without checking the capacity.
+                 * It is up to the caller to ensure the capacity of the vector is sufficiently large.
+                 * This method uses debug assertions to check that the arrayvec is not full.
+                 */
                 PRIORITY_STACK.push_unchecked(task_priority);
             }
         };
