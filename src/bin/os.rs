@@ -1,13 +1,9 @@
-/**
- * モジュール分割前
- */
 #![no_std]
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::hal::delay;
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm};
-use arduino_hal::{delay_ms, prelude::*, Delay};
+use arduino_hal::{prelude::*, Delay};
 use avr_device::atmega328p::tc1::tccr1b::CS1_A;
 use avr_device::atmega328p::TC1;
 use core::cell::{self};
@@ -30,10 +26,6 @@ extern crate avr_device as device;
 use device::interrupt::Mutex;
 
 static mut TASKS: Mutex<Vec<TaskControlBlock, 8>> = Mutex::new(Vec::new());
-
-pub trait GlobalLog: Sync {
-    fn log(&self, address: u8);
-}
 
 use heapless::Vec; // fixed capacity `std::Vec`
 
