@@ -51,7 +51,7 @@ fn main() -> ! {
     pin4.set_high();
 
     loop {
-        let values = [
+        let mut values = [
             a0.analog_read(&mut adc),
             a1.analog_read(&mut adc),
             a2.analog_read(&mut adc),
@@ -66,54 +66,58 @@ fn main() -> ! {
 
         ufmt::uwriteln!(&mut serial, "").void_unwrap();
 
-        arduino_hal::delay_ms(100);
+        arduino_hal::delay_ms(5);
 
-        // アナログピンから読み取れる電圧が微弱すぎるため暫定的に+10
-        _i_pwm = task_pwm(values[1] + 10);
+        if values[1] == 0 {
+            values[1] = values[1] + 1
+        }
+
+        // アナログピンから読み取れる電圧が微弱すぎるため暫定的に*100
+        // 0.48ミリ秒
+
+        _i_pwm = task_pwm(&mut serial, values[1], _i_pwm as u16);
 
         ufmt::uwriteln!(&mut serial, "{}", _i_pwm).void_unwrap();
 
         d3.set_duty(_i_pwm);
-        arduino_hal::delay_ms(100);
+        arduino_hal::delay_ms(5);
 
         task_relay(&mut serial, &mut pin4, _i_pwm);
     }
 }
 
-pub fn task_pwm(values: u16) -> u8 {
-    let mut _f_pwm: f32 = 128.0;
-    let mut _f_coe_ff_p: f32 = 0.3;
-    let mut _f_coe_ff_i: f32 = 0.4;
-    let mut _f_coe_ff_d: f32 = 2.8;
+pub fn task_pwm<W: uWrite<Error = void::Void>>(serial: &mut W, values: u16, _i_pwm: u16) -> u8 {
+    let mut _i_pwm: u16 = _i_pwm;
+    let mut _i_monitor: u16 = values;
     let mut _i_target: u16 = 80;
-    let mut _fp_error: f32 = 0.0;
-    let mut _fi_error: f32 = 0.0;
-    let mut _fd_error: f32 = 0.0;
-    let mut _fp_error_previous: f32 = 0.0;
+    let mut _ip_error: u16 = 0;
+    let mut _new_i_pwm: u16 = 0;
 
     if values > 255 {
         return 255;
     }
-    let mut _i_monitor: u16 = values;
+    ufmt::uwriteln!(serial, "i_monitor={}", _i_monitor).void_unwrap();
+
     if _i_monitor > _i_target {
-        _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
-    } else {
-        // _i_monitor<_i_targetのときに、_fp_errorが負の値になり、その後の計算結果も負の値になり、最終的に_f_pwmが負の値になってしまいフリーズするため_i_monitor-_i_target>0にする
-        _fp_error = _f_coe_ff_p * (_i_target - _i_monitor) as f32 / 1.5;
+        _ip_error = (_i_monitor - _i_target) / 3;
+        ufmt::uwriteln!(serial, " _ip_error???={}", _ip_error).void_unwrap();
+        _i_pwm -= _ip_error;
+        ufmt::uwriteln!(serial, " _i_pwm???={}", _i_pwm).void_unwrap();
+        _new_i_pwm = _i_pwm;
+        return _new_i_pwm as u8;
+    } else if _i_monitor < _i_target {
+        _ip_error = (_i_target - _i_monitor) / 3;
+        ufmt::uwriteln!(serial, " _ip_error???={}", _ip_error).void_unwrap();
+        _i_pwm += _ip_error;
+        ufmt::uwriteln!(serial, " _i_pwm???={}", _i_pwm).void_unwrap();
+        _new_i_pwm = _i_pwm;
+        return _new_i_pwm as u8;
     }
-    _fi_error = _f_coe_ff_i * _fp_error;
-    _fd_error = _f_coe_ff_d * (_fp_error - _fp_error_previous);
-    _fp_error_previous = _fp_error;
-    _f_pwm -= _fp_error + _fi_error + _fd_error;
+
     // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
     // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換する
-    _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
 
-    if _i_monitor > 255 {
-        return 255;
-    }
-
-    return _i_monitor as u8;
+    return _i_pwm as u8;
 }
 
 pub fn task_relay<W: uWrite<Error = void::Void>>(
