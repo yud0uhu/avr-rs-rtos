@@ -44,7 +44,17 @@ pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     };
 
     // 1秒周期に設定
-    let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor) as u16;
+    // let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor) as u16;
+    // ufmt::uwriteln!(
+    //     serial,
+    //     "configuring timer output compare register = {}",
+    //     ticks
+    // )
+    // .void_unwrap();
+
+    // 0.48ms周期に設定
+
+    let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor / 2083) as u16; // 2083 = (1/0.48) *10^6
     ufmt::uwriteln!(
         serial,
         "configuring timer output compare register = {}",

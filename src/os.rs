@@ -48,9 +48,8 @@ static mut COUNT: usize = 0;
 /**
  * タスクの初期化(TCBスタックに登録)後、コンテキストスイッチを1秒周期(1000ms)で実行し、優先順位順に実行可能タスクを切り替える関数
  */
-pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_pwm: u16) {
+pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W) {
     task_init(serial);
-
     while unsafe { COUNT < MAX_TACK_ID } {
         // 割り込みハンドラ
         context_switch();
@@ -68,7 +67,7 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W, _i_pwm: u16) {
                 vec[_task_id - 1].task_handler;
             }
         }
-        os_delay(100);
+        // os_delay(5);
 
         unsafe {
             COUNT += 1;

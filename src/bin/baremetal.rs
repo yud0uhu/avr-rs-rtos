@@ -72,7 +72,6 @@ fn main() -> ! {
             values[1] = values[1] + 1
         }
 
-        // アナログピンから読み取れる電圧が微弱すぎるため暫定的に*100
         // 0.48ミリ秒
 
         _i_pwm = task_pwm(&mut serial, values[1], _i_pwm as u16);
