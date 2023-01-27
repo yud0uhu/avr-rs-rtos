@@ -2,8 +2,9 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::prelude::*;
+use arduino_hal::hal::delay;
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm};
+use arduino_hal::{delay_us, prelude::*};
 use avr_device::atmega328p::TC1;
 use micromath::F32Ext;
 use panic_halt as _;
@@ -155,7 +156,7 @@ fn main() -> ! {
     }
     value = value;
 
-    // uwriteln!(&mut serial, "A1: {} ", value).void_unwrap();
+    uwriteln!(&mut serial, "A1: {} ", value).void_unwrap();
 
     let mut task_pwm = TaskPwm {
         values: value as u8,
@@ -165,11 +166,11 @@ fn main() -> ! {
 
     _i_pwm = task_pwm.u_call();
 
-    d3.set_duty(_i_pwm as u8);
+    d3.set_duty(_i_pwm);
 
     let mut task_relay = TaskRelay {
         pin4: pin4,
-        _i_pwm: _i_pwm as u8,
+        _i_pwm: _i_pwm,
     };
 
     // uwriteln!(&mut serial, "MONITOR: {} ", _i_pwm).void_unwrap();

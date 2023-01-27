@@ -52,7 +52,9 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W) {
     task_init(serial);
     while unsafe { COUNT < MAX_TACK_ID } {
         // 割り込みハンドラ
+
         context_switch();
+
         let mut _task_id = os_timer::high_priority_task_id() as usize;
         unsafe {
             let vec = TASKS.get_mut();
@@ -67,7 +69,6 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W) {
                 vec[_task_id - 1].task_handler;
             }
         }
-        // os_delay(5);
 
         unsafe {
             COUNT += 1;
@@ -78,8 +79,8 @@ pub fn os_start<W: uWrite<Error = void::Void>>(serial: &mut W) {
     }
 }
 
-pub fn os_delay(ms: u16) {
-    Delay::new().delay_ms(ms)
+pub fn os_delay(us: u16) {
+    Delay::new().delay_us(us)
 }
 
 /**
