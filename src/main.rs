@@ -2,8 +2,9 @@
 #![no_main]
 #![feature(abi_avr_interrupt)]
 
-use arduino_hal::prelude::*;
+use arduino_hal::hal::delay;
 use arduino_hal::simple_pwm::{IntoPwmPin, Prescaler, Timer2Pwm};
+use arduino_hal::{delay_us, prelude::*};
 use avr_device::atmega328p::TC1;
 use micromath::F32Ext;
 use panic_halt as _;
@@ -34,50 +35,41 @@ pub fn task_reload(
 
 trait Tasks {
     fn call(&mut self);
+    fn u_call(&mut self) -> u8;
     fn init(&mut self);
 }
 
 impl Tasks for TaskPwm {
     fn call(&mut self) {
-        let mut _f_pwm: f32 = 128.0;
-        let mut _f_coe_ff_p: f32 = 0.3;
-        let mut _f_coe_ff_i: f32 = 0.4;
-        let mut _f_coe_ff_d: f32 = 2.8;
-        let mut _i_target: u16 = 80;
-        let mut _fp_error: f32 = 0.0;
-        let mut _fi_error: f32 = 0.0;
-        let mut _fd_error: f32 = 0.0;
-        let mut _fp_error_previous: f32 = 0.0;
-        let d3 = &mut self.d3;
+        self.u_call();
+    }
+    fn u_call(&mut self) -> u8 {
+        let mut _i_pwm: u8 = self._i_pwm;
+        let mut _i_monitor: u8 = self.values;
+        let mut _i_target: u8 = 80;
+        let mut _ip_error: u8 = 0;
+        let mut _new_i_pwm: u8 = 0;
 
-        let values = self.values;
-
-        if values > 255 {
-            d3.set_duty(255);
+        if self.values > 255 {
+            _new_i_pwm = 255;
+            // self.d3.set_duty(_new_i_pwm as u8);
+            return 255;
         }
 
-        let mut _i_monitor: u16 = values;
         if _i_monitor > _i_target {
-            _fp_error = _f_coe_ff_p * (_i_monitor - _i_target) as f32 / 1.5;
-        } else {
-            // _i_monitor<_i_targetのときに、_fp_errorが負の値になり、その後の計算結果も負の値になり、最終的に_f_pwmが負の値になってしまいフリーズするため_i_monitor-_i_target>0にする
-            _fp_error = _f_coe_ff_p * (_i_target - _i_monitor) as f32 / 1.5;
+            _ip_error = (_i_monitor - _i_target) / 3;
+            _i_pwm -= _ip_error;
+            _new_i_pwm = _i_pwm;
+            // self.d3.set_duty(_new_i_pwm as u8);
+            return _new_i_pwm as u8;
+        } else if _i_monitor < _i_target {
+            _ip_error = (_i_target - _i_monitor) / 3;
+            _i_pwm += _ip_error;
+            _new_i_pwm = _i_pwm;
+            // self.d3.set_duty(_new_i_pwm as u8);
+            return _new_i_pwm as u8;
         }
-        _fi_error = _f_coe_ff_i * _fp_error;
-        _fd_error = _f_coe_ff_d * (_fp_error - _fp_error_previous);
-        _fp_error_previous = _fp_error;
-        _f_pwm -= _fp_error + _fi_error + _fd_error;
-        // _f_pwmが小数点以下を持っているため、小数点以下が切り捨てられ、結果が予期しない値になるためpanicする
-        // この問題を防ぐために、round()関数で小数点以下を四捨五入し、f_pwmをu16にキャストする前に整数に変換・0以上255以下に制限する
-        // 以下のようにして、_i_monitor変数に対して_f_pwm.round() as u16から得られた値を四捨五入し、0以上255以下に制限する処理を行う
-        // 1. _i_monitor.max(): _i_monitor変数と_f_pwmの四捨五入した値をu16型にキャストした値を比較し、値の大きい方を_i_monitorに代入
-        // 2. _i_monitor.min(): _i_monitor変数と255を比較し、値の小さい方を_i_monitorに代入
-        _i_monitor = _i_monitor.max(_i_monitor.min(_f_pwm.round() as u16));
-
-        if _i_monitor > 255 {
-            d3.set_duty(255);
-        }
-        d3.set_duty(_i_monitor as u8);
+        return _new_i_pwm as u8;
     }
 
     fn init(&mut self) {}
@@ -87,16 +79,15 @@ impl Tasks for TaskRelay {
     fn call(&mut self) {
         let pin4 = &mut self.pin4;
         // let serial = self.serial;
-        let _i_pwm = self._i_pwm;
 
-        const THRESHOLD: u16 = 100;
+        const THRESHOLD: u8 = 100;
         let mut _flg: bool = true;
         let mut _previous_flag: bool = true;
 
-        if _i_pwm < THRESHOLD - 1 {
+        if self._i_pwm < THRESHOLD - 1 {
             _flg = true;
         }
-        if _i_pwm > THRESHOLD {
+        if self._i_pwm > THRESHOLD {
             _flg = false;
         }
         if _flg == true {
@@ -113,34 +104,38 @@ impl Tasks for TaskRelay {
             }
         }
     }
+    fn u_call(&mut self) -> u8 {
+        return 0;
+    }
     fn init(&mut self) {}
 }
 
 impl Tasks for TaskDisplay {
     fn call(&mut self) {}
     fn init(&mut self) {}
+    fn u_call(&mut self) -> u8 {
+        return 0;
+    }
 }
 struct TaskPwm {
-    values: u16,
-    d3: Pin<PwmOutput<Timer2Pwm>, PD3>,
+    values: u8,
+    _i_pwm: u8,
+    // d3: Pin<PwmOutput<Timer2Pwm>, PD3>,
 }
 
 struct TaskRelay {
     pin4: Pin<Output, PD4>,
-    _i_pwm: u16,
+    _i_pwm: u8,
 }
 
 struct TaskDisplay {}
 
 #[arduino_hal::entry]
 fn main() -> ! {
-    let mut _i_pwm: u16 = 128;
+    let mut _i_pwm: u8 = 128;
     let dp = arduino_hal::Peripherals::take().unwrap();
 
     let pins = arduino_hal::pins!(dp);
-    // dp.EXINT.eicra.modify(|_, w| w.isc0().bits(0x02));
-    // Enable the INT0 interrupt source.
-    // dp.EXINT.eimsk.modify(|_, w| w.int0().set_bit());
 
     let mut serial = arduino_hal::default_serial!(dp, pins, 57600);
     let mut adc = arduino_hal::Adc::new(dp.ADC, Default::default());
@@ -153,19 +148,32 @@ fn main() -> ! {
     pin4.set_high();
 
     let a1 = pins.a1.into_analog_input(&mut adc);
-    _i_pwm = a1.analog_read(&mut adc) + 50;
 
-    uwriteln!(&mut serial, "A1: {} ", _i_pwm).void_unwrap();
-    // let _i_monitor = 128;
+    let mut value = a1.analog_read(&mut adc);
+
+    if value == 0 {
+        value = value + 1
+    }
+    value = value;
+
+    uwriteln!(&mut serial, "A1: {} ", value).void_unwrap();
+
     let mut task_pwm = TaskPwm {
-        values: _i_pwm,
-        d3: d3,
+        values: value as u8,
+        _i_pwm: _i_pwm,
+        // d3: d3,
     };
+
+    _i_pwm = task_pwm.u_call();
+
+    d3.set_duty(_i_pwm);
 
     let mut task_relay = TaskRelay {
         pin4: pin4,
         _i_pwm: _i_pwm,
     };
+
+    // uwriteln!(&mut serial, "MONITOR: {} ", _i_pwm).void_unwrap();
 
     let mut task_display = TaskDisplay {};
 
@@ -200,7 +208,7 @@ fn main() -> ! {
 
     os::os_timer::timer_create(&tmr1, &mut serial);
 
-    os::os_start(&mut serial, _i_pwm);
+    os::os_start(&mut serial);
 
     unsafe {
         avr_device::interrupt::enable();
