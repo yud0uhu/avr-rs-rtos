@@ -97,7 +97,7 @@ fn high_priority_task_id() -> u32 {
     avr_device::interrupt::free(|cs| HIGH_PRIORITY_TASK_ID.borrow(cs).get())
 }
 
-pub fn task_reload(_task1: TaskControlBlock, _task2: TaskControlBlock, _task3: TaskControlBlock) {
+pub fn create_task(_task1: TaskControlBlock, _task2: TaskControlBlock, _task3: TaskControlBlock) {
     unsafe {
         let vec = TASKS.get_mut();
         vec.push_unchecked(_task1);
@@ -334,7 +334,7 @@ fn main() -> ! {
 
     let tmr1: TC1 = dp.TC1;
 
-    task_reload(_task1, _task2, _task3);
+    create_task(_task1, _task2, _task3);
 
     timer_create(&tmr1, &mut serial);
 
