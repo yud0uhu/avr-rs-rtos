@@ -20,7 +20,7 @@ mod os;
 /**
  * タスクをセットする関数
  */
-pub fn task_reload(
+pub fn create_task(
     _task1: os::tcb::TaskControlBlock,
     _task2: os::tcb::TaskControlBlock,
     _task3: os::tcb::TaskControlBlock,
@@ -204,7 +204,7 @@ fn main() -> ! {
 
     let tmr1: TC1 = dp.TC1;
 
-    task_reload(_task1, _task2, _task3);
+    create_task(_task1, _task2, _task3);
 
     os::os_timer::timer_create(&tmr1, &mut serial);
 
