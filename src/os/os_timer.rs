@@ -3,7 +3,6 @@ use avr_device::atmega328p::tc1::tccr1b::CS1_A;
 use avr_device::atmega328p::TC1;
 use core::cell;
 use panic_halt as _;
-use panic_halt as _;
 use ufmt::{uWrite, uwriteln};
 
 /**
@@ -19,7 +18,7 @@ pub fn high_priority_task_id() -> u32 {
     avr_device::interrupt::free(|cs| HIGH_PRIORITY_TASK_ID.borrow(cs).get())
 }
 /**
- * 1秒周期のタイマー割り込みをセットする関数。タスクを設定後に宣言して使う。タイマー1のインスタンス変数を第1引数に渡す
+ * 0.48ms周期のタイマー割り込みをセットする関数。タスクを設定後に宣言して使う。タイマー1のインスタンス変数を第1引数に渡す
  */
 pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
     /*
@@ -43,17 +42,7 @@ pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
         }
     };
 
-    // 1秒周期に設定
-    // let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor) as u16;
-    // ufmt::uwriteln!(
-    //     serial,
-    //     "configuring timer output compare register = {}",
-    //     ticks
-    // )
-    // .void_unwrap();
-
-    // 0.48ms周期に設定
-
+    // 0.48ms周期の割り込みを設定
     let ticks = (ARDUINO_UNO_CLOCK_FREQUENCY_HZ / clock_divisor / 2083) as u16; // 2083 = (1/0.48) *10^6
     ufmt::uwriteln!(
         serial,
@@ -70,7 +59,7 @@ pub fn timer_create<W: uWrite<Error = void::Void>>(tmr1: &TC1, serial: &mut W) {
             .wgm1()
             .bits(0b01)
     });
-    // 1秒周期の割り込みを設定
     tmr1.ocr1a.write(|w| unsafe { w.bits(ticks) });
-    tmr1.timsk1.write(|w| w.ocie1a().set_bit()); // オーバーフロー割り込みを許可
+    // オーバーフロー割り込みを許可
+    tmr1.timsk1.write(|w| w.ocie1a().set_bit());
 }

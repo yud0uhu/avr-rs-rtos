@@ -3,7 +3,6 @@ use device::interrupt::Mutex;
 use panic_halt as _;
 
 use arduino_hal::{prelude::*, Delay};
-use panic_halt as _;
 use ufmt::{uWrite, uwriteln};
 
 pub mod os_timer;
